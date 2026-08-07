@@ -1,3 +1,5 @@
+const requestsByIp = new Map();
+
 module.exports = async (request, response) => {
   if (request.method !== 'POST') {
     response.setHeader('Allow', 'POST');
@@ -7,6 +9,19 @@ module.exports = async (request, response) => {
   const authorization = request.headers.authorization;
   if (!authorization) {
     return response.status(401).json({ error: { message: 'Add an API key in AI Settings before running analysis.' } });
+  }
+
+  const clientIp = String(request.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
+  const now = Date.now();
+  const recentRequests = (requestsByIp.get(clientIp) || []).filter(time => now - time < 60 * 60 * 1000);
+  if (recentRequests.length >= 12) {
+    return response.status(429).json({ error: { message: 'Analysis limit reached. Try again in an hour.' } });
+  }
+  recentRequests.push(now);
+  requestsByIp.set(clientIp, recentRequests);
+
+  if (!request.body || JSON.stringify(request.body).length > 4_000_000) {
+    return response.status(413).json({ error: { message: 'Analysis request is too large. Use fewer or shorter videos.' } });
   }
 
   try {
