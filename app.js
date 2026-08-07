@@ -2,10 +2,12 @@ const $ = selector => document.querySelector(selector);
 const video = $('#video');
 const fileInput = $('#file');
 const MAX_VIDEOS = 10;
+const MAX_VIDEO_DURATION_SECONDS = 3 * 60;
+const CYCLES_FOR_ESTIMATE = 10;
 let studyFiles = [];
 let analysisCancelled = false;
 
-const confidenceFor = count => count < 5 ? 'Low' : count < 10 ? 'Medium' : 'High';
+const confidenceFor = cycles => cycles < 5 ? 'Low' : cycles < CYCLES_FOR_ESTIMATE ? 'Medium' : 'High';
 const formatTime = seconds => {
   const minutes = Math.floor(seconds / 60);
   const remainder = (seconds % 60).toFixed(1).padStart(4, '0');
@@ -60,27 +62,44 @@ $('#editTitle').onclick = () => {
 };
 $('#uploadBtn').onclick = () => fileInput.click();
 
-fileInput.onchange = event => {
-  const chosen = [...event.target.files];
-  studyFiles = chosen.slice(0, MAX_VIDEOS);
+const durationFor = file => new Promise((resolve, reject) => {
+  const probe = document.createElement('video');
+  const url = URL.createObjectURL(file);
+  const cleanup = () => URL.revokeObjectURL(url);
+  probe.preload = 'metadata';
+  probe.onloadedmetadata = () => { const duration = probe.duration; cleanup(); resolve(duration); };
+  probe.onerror = () => { cleanup(); reject(new Error(`Could not read ${file.name}`)); };
+  probe.src = url;
+});
+
+fileInput.onchange = async event => {
+  const chosen = [...event.target.files].slice(0, MAX_VIDEOS);
+  if ([...event.target.files].length > MAX_VIDEOS) toast(`Only the first ${MAX_VIDEOS} videos can be loaded.`);
+  const checked = await Promise.all(chosen.map(async file => {
+    try { return { file, duration: await durationFor(file) }; }
+    catch { return { file, duration: NaN }; }
+  }));
+  const rejected = checked.filter(({ duration }) => !Number.isFinite(duration) || duration > MAX_VIDEO_DURATION_SECONDS);
+  studyFiles = checked.filter(({ duration }) => Number.isFinite(duration) && duration > 0 && duration <= MAX_VIDEO_DURATION_SECONDS).map(({ file }) => file);
+  if (rejected.length) toast(`${rejected.length} video${rejected.length === 1 ? '' : 's'} skipped: each video must be 3 minutes or less.`);
   if (!studyFiles.length) return;
-  if (chosen.length > MAX_VIDEOS) toast(`Only the first ${MAX_VIDEOS} videos were loaded.`);
   video.src = URL.createObjectURL(studyFiles[0]);
   video.style.display = 'block';
   $('#emptyVideo').style.display = 'none';
   const count = studyFiles.length;
   $('#studyStatus').textContent = count === 1 ? '1 video ready' : `${count} videos ready`;
   $('#aiStatus').textContent = `READY · ${count} CLIP${count === 1 ? '' : 'S'}`;
-  $('#confidence').textContent = confidenceFor(count);
+  $('#confidence').textContent = 'Low';
   $('#cycle').textContent = '—';
-  $('#cycleLabel').textContent = 'AI cycle-time estimate requires 10 videos';
+  $('#cycleLabel').textContent = `AI cycle-time estimate requires ${CYCLES_FOR_ESTIMATE} complete observed cycles`;
   $('#cycles').textContent = '—';
   $('#lossBar').style.opacity = '.28';
   $('#lossLegend').innerHTML = '<span>Run analysis to generate directional findings.</span>';
   $('#reachTag').hidden = true;
   $('#timeline').hidden = true;
-  $('#opportunityRows').innerHTML = `<div class="detail" style="padding:22px 0">${count}/10 videos loaded. Run analysis for a directional work-method review.</div>`;
-  $('#analysisHint').innerHTML = `<b>Confidence:</b> ${confidenceFor(count)} with ${count}/10 videos. Low: 0–4, medium: 5–9, high: 10.`;
+  $('#opportunityRows').innerHTML = `<div class="detail" style="padding:22px 0">${count}/${MAX_VIDEOS} videos loaded. Run analysis to identify complete cycles and work-method opportunities.</div>`;
+  $('#analysisHint').innerHTML = `<b>Upload guidance:</b> ${count}/${MAX_VIDEOS} videos loaded, each up to 3 minutes. Confidence is based on complete cycles observed: low 0–4, medium 5–9, high 10+.`;
+  fileInput.value = '';
 };
 
 video.ontimeupdate = () => {
@@ -140,7 +159,7 @@ $('#analyzeBtn').onclick = async () => {
   try {
     const clips = studyFiles;
     const evidence = [];
-    const framesPerClip = Math.max(4, Math.min(8, Math.floor(24 / clips.length)));
+    const framesPerClip = Math.max(4, Math.min(30, Math.floor(40 / clips.length)));
     let scanned = 0;
     for (let index = 0; index < clips.length; index += 1) {
       const frames = await scanClip(clips[index], index + 1, clips.length);
@@ -149,7 +168,7 @@ $('#analyzeBtn').onclick = async () => {
     }
     if (analysisCancelled) throw new Error('Analysis cancelled');
     setProgress(`Reviewing ${evidence.length} evidence frames…`);
-    const prompt = `You are a senior industrial engineer reviewing ${clips.length} assembly video clips of the same operation. Return every distinct, evidence-based cycle-time opportunity. Each finding must include visible observation, a matching experiment, cautious directional time saving, category, and clip/timestamp evidence. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Return STRICT JSON: {"summary":"one sentence","cycles_observed":0,"cycle_time":"Preliminary: ~0.0 sec/cycle","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"what is visibly happening","evidence":"clip/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
+    const prompt = `You are a senior industrial engineer reviewing ${clips.length} continuous assembly video clip${clips.length === 1 ? '' : 's'} of the same operation. Identify repeated COMPLETE cycles inside the footage; a cycle begins at the same recognizable work-state and ends immediately before that state repeats. Count only cycles that are visibly supported by the ordered timestamped frames. Do not infer cycles from video duration or file count. Return every distinct evidence-based cycle-time opportunity. Each finding must include visible observation, a matching experiment, cautious directional time saving, category, and video/timestamp evidence. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when cycles_observed is at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":0,"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"what is visibly happening","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
     const content = [{ type: 'input_text', text: prompt }];
     evidence.forEach(frame => content.push({ type: 'input_text', text: `Video ${frame.clip}, timestamp ${formatTime(frame.time)}` }, { type: 'input_image', image_url: frame.image, detail: 'low' }));
     const controller = new AbortController();
@@ -177,12 +196,14 @@ function renderReport(data, videoCount, evidenceCount, scannedCount) {
   const valueAdded = Number(data.time_distribution?.value_added_pct);
   const waste = Number(data.time_distribution?.waste_pct);
   $('#cycles').textContent = Number.isFinite(cycles) ? cycles : '—';
-  if (videoCount >= MAX_VIDEOS && data.cycle_time) {
+  const observedCycles = Number.isFinite(cycles) ? cycles : 0;
+  if (observedCycles >= CYCLES_FOR_ESTIMATE && data.cycle_time) {
     $('#cycle').textContent = data.cycle_time;
-    $('#cycleLabel').textContent = 'AI cycle-time estimate from 10 videos — validate with a timed study';
+    $('#cycleLabel').textContent = `AI cycle-time estimate from ${observedCycles} observed cycles — validate with a timed study`;
   } else {
     $('#cycle').textContent = 'Not measured';
-    $('#cycleLabel').textContent = `${videoCount}/10 videos loaded — add more videos for an AI cycle-time estimate`;
+    const missing = Math.max(0, CYCLES_FOR_ESTIMATE - observedCycles);
+    $('#cycleLabel').textContent = `${observedCycles}/${CYCLES_FOR_ESTIMATE} complete cycles observed — ${missing} more needed for an AI estimate`;
   }
   if (Number.isFinite(valueAdded) && Number.isFinite(waste)) {
     const total = valueAdded + waste || 100;
@@ -193,13 +214,13 @@ function renderReport(data, videoCount, evidenceCount, scannedCount) {
     $('#wasteBar').style.width = `${wastePct}%`;
     $('#lossLegend').innerHTML = `<span><i class="dot" style="background:#2485c7"></i>Value-added (AI estimate) <b>${valuePct}%</b></span><span><i class="dot" style="background:#e7b85c"></i>Waste (AI estimate) <b>${wastePct}%</b></span>`;
   }
-  $('#confidence').textContent = confidenceFor(videoCount);
+  $('#confidence').textContent = confidenceFor(observedCycles);
   $('#studyStatus').textContent = 'Study report ready';
   $('#aiStatus').textContent = `REPORT COMPLETE · ${videoCount} CLIP${videoCount === 1 ? '' : 'S'}`;
   $('#reachTag').hidden = !findings.some(hasReachEvidence);
   const review = `<div class="review-summary"><b>Study report:</b> ${escapeHtml(data.summary || 'Review complete.')}<br><span>${escapeHtml(data.limitations || `Reviewed ${evidenceCount} frames from ${scannedCount} local scans.`)}</span></div>`;
   const rows = findings.length ? `<div class="eyebrow" style="margin-top:16px">OBSERVATIONS &amp; EXPERIMENTS</div>${findings.map((finding, index) => `<div class="finding"><div class="rank">${String(index + 1).padStart(2, '0')}</div><div class="finding-label">OBSERVATION</div><div class="finding-copy">${escapeHtml(`${finding.observation || ''} ${finding.evidence || ''}`)}</div><div class="finding-label">EXPERIMENT TO RUN</div><div class="finding-copy">${escapeHtml(finding.experiment || 'Define a controlled work-method test')}</div><div class="saving">Estimated saving: ${escapeHtml(finding.estimated_savings || 'Preliminary — validate with timed cycles')}</div></div>`).join('')}` : '<div class="detail" style="padding:14px 0">No finding was supported by this evidence set.</div>';
   $('#opportunityRows').innerHTML = review + rows;
-  $('#analysisHint').innerHTML = `<b>Report complete:</b> ${videoCount}/10 videos reviewed. Confidence: ${confidenceFor(videoCount)}.`;
+  $('#analysisHint').innerHTML = `<b>Report complete:</b> ${videoCount} video${videoCount === 1 ? '' : 's'} reviewed; ${observedCycles} complete cycles observed. Confidence: ${confidenceFor(observedCycles)}.`;
   toast('Work-method report complete.');
 }
