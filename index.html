@@ -55,7 +55,7 @@
       for(const frame of evidence)content.push({type:'input_text',text:`Clip ${frame.clip}, timestamp ${fmt(frame.time)}`},{type:'input_image',image_url:frame.image,detail:'high'});
       const res=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model:selectedModel(),input:[{role:'user',content}],text:{format:{type:'json_object'}}})});
       if(!res.ok)throw new Error((await res.json()).error?.message||'AI request failed');
-      const out=await res.json();let data;try{data=JSON.parse(out.output_text||'{}')}catch{data={summary:out.output_text}}
+      const out=await res.json();const outputText=out.output_text||out.output?.flatMap(item=>item.content||[]).filter(item=>item.type==='output_text'||item.type==='text').map(item=>item.text||'').join('')||'';let data;try{data=JSON.parse(outputText||'{}')}catch{data={summary:outputText}}
       const findings=Array.isArray(data.findings)?data.findings:[];
       $('#confidence').textContent=confidenceFor(studyFiles.length);$('#studyStatus').textContent='Study report ready';$('#aiStatus').textContent=`REPORT COMPLETE · ${clips.length} CLIP${clips.length===1?'':'S'}`;$('#reachTag').hidden=!findings.some(hasReachEvidence);$('#timeline').hidden=false;
       const review=`<div class="review-summary"><b>Study report:</b> ${escapeHtml(data.summary||'Review complete.')}<br><span>${escapeHtml(data.limitations||`Reviewed ${evidence.length} timestamped frames from ${scanned} local scans.`)}</span></div>`;
