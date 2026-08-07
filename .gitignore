@@ -1,1 +1,3 @@
 .vercel
+desktop/node_modules
+desktop/dist

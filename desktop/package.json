@@ -1,0 +1,28 @@
+{
+  "name": "opex-cycle-time-studies",
+  "version": "0.1.0",
+  "description": "OpEx Cycle Time Studies desktop app",
+  "main": "main.cjs",
+  "scripts": {
+    "build:windows": "electron-builder --win zip --x64"
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.opex.cycletimestudies",
+    "productName": "OpEx Cycle Time Studies",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "zip"
+      ]
+    }
+  }
+}
