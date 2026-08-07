@@ -95,6 +95,7 @@ fileInput.onchange = async event => {
   $('#cycle').textContent = '—';
   $('#cycleLabel').textContent = `AI cycle-time estimate requires ${CYCLES_FOR_ESTIMATE} complete observed cycles`;
   $('#cycles').textContent = '—';
+  $('#cyclesLabel').textContent = 'cycles observed';
   $('#lossBar').style.opacity = '.28';
   $('#lossLegend').innerHTML = '<span>Run analysis to generate directional findings.</span>';
   $('#reachTag').hidden = true;
@@ -122,10 +123,10 @@ const captureFrame = time => new Promise((resolve, reject) => {
     if (settled) return;
     settled = true;
     const canvas = document.createElement('canvas');
-    canvas.width = Math.min(video.videoWidth, 480);
+    canvas.width = Math.min(video.videoWidth, 400);
     canvas.height = Math.max(1, Math.round(canvas.width * video.videoHeight / video.videoWidth));
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    resolve({ time, image: canvas.toDataURL('image/jpeg', .62) });
+    resolve({ time, image: canvas.toDataURL('image/jpeg', .5) });
   };
   video.addEventListener('seeked', done, { once: true });
   video.currentTime = Math.min(time, Math.max(0, video.duration - .1));
@@ -137,7 +138,7 @@ const sampleEvenly = (items, count) => {
 };
 const scanClip = async (clip, clipNumber, total) => {
   await loadClip(clip);
-  const scanCount = Math.min(30, Math.max(12, Math.ceil(video.duration * 2)));
+  const scanCount = Math.min(60, Math.max(24, Math.ceil(video.duration)));
   const frames = [];
   for (let index = 0; index < scanCount; index += 1) {
     if (analysisCancelled) throw new Error('Analysis cancelled');
@@ -179,7 +180,7 @@ $('#analyzeBtn').onclick = async () => {
   try {
     const clips = studyFiles;
     const evidence = [];
-    const framesPerClip = Math.max(4, Math.min(30, Math.floor(40 / clips.length)));
+    const framesPerClip = Math.max(4, Math.min(60, Math.floor(60 / clips.length)));
     let scanned = 0;
     for (let index = 0; index < clips.length; index += 1) {
       const frames = await scanClip(clips[index], index + 1, clips.length);
@@ -193,6 +194,7 @@ $('#analyzeBtn').onclick = async () => {
     pendingStudy = { clips, evidence, scanned };
     $('#confirmedSources').value = sourcesText(calibration.source_candidates);
     $('#confirmedSteps').value = stepsText(calibration.cycle_steps);
+    $('#confirmedCycleCount').value = '';
     $('#studySetup').classList.add('open');
     $('#aiStatus').textContent = 'CONFIRM SOURCES & CYCLE ORDER';
     toast(calibration.setup_note || 'Confirm the proposed sources and cycle order before the report runs.');
@@ -215,7 +217,9 @@ $('#cancelStudySetup').onclick = () => {
 $('#confirmStudySetup').onclick = async () => {
   const sources = $('#confirmedSources').value.trim();
   const steps = $('#confirmedSteps').value.trim();
-  if (!sources || !steps) return toast('Confirm at least one material source and the cycle order before continuing.');
+  const cycleCountInput = $('#confirmedCycleCount').value.trim();
+  const confirmedCycles = Number(cycleCountInput);
+  if (!sources || !steps || !cycleCountInput || !Number.isInteger(confirmedCycles) || confirmedCycles < 0) return toast('Confirm the material source, cycle order, and complete-cycle count before continuing.');
   if (!pendingStudy) return toast('Run the setup review again.');
   const key = localStorage.getItem('helios-key');
   const button = $('#analyzeBtn');
@@ -226,9 +230,10 @@ $('#confirmStudySetup').onclick = async () => {
   loader.classList.add('open');
   try {
     setProgress(`Reviewing ${pendingStudy.evidence.length} evidence frames…`);
-    const prompt = `You are a senior industrial engineer reviewing ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. Identify repeated COMPLETE cycles only when the timestamped evidence visibly supports that sequence; a cycle begins at the same recognizable work-state and ends immediately before that state repeats. Do not infer cycles from video duration or file count. Return every distinct evidence-based cycle-time opportunity. A source-location finding must refer only to a confirmed source and cite video/timestamp evidence. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when cycles_observed is at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":0,"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
+    const prompt = `You are a senior industrial engineer reviewing ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Use timestamped frames to check whether the confirmed sequence is visible, but do not infer cycles from video duration or file count. Return every distinct evidence-based cycle-time opportunity. A source-location finding must refer only to a confirmed source and cite video/timestamp evidence. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
     const data = await analyzeContent(contentFor(prompt, pendingStudy.evidence), key);
-    renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned);
+    data.cycles_observed = confirmedCycles;
+    renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned, true);
     pendingStudy = null;
   } catch (error) {
     const message = error.name === 'AbortError' ? 'Analysis timed out. Try shorter clips or fewer videos.' : error.message;
@@ -240,12 +245,13 @@ $('#confirmStudySetup').onclick = async () => {
   }
 };
 
-function renderReport(data, videoCount, evidenceCount, scannedCount) {
+function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerConfirmedCycles = false) {
   const findings = Array.isArray(data.findings) ? data.findings : [];
   const cycles = Number(data.cycles_observed);
   const valueAdded = Number(data.time_distribution?.value_added_pct);
   const waste = Number(data.time_distribution?.waste_pct);
   $('#cycles').textContent = Number.isFinite(cycles) ? cycles : '—';
+  $('#cyclesLabel').textContent = reviewerConfirmedCycles ? 'reviewer-confirmed cycles' : 'cycles observed';
   const observedCycles = Number.isFinite(cycles) ? cycles : 0;
   if (observedCycles >= CYCLES_FOR_ESTIMATE && data.cycle_time) {
     $('#cycle').textContent = data.cycle_time;
