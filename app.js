@@ -6,6 +6,7 @@ const MAX_VIDEO_DURATION_SECONDS = 3 * 60;
 const CYCLES_FOR_ESTIMATE = 10;
 let studyFiles = [];
 let analysisCancelled = false;
+let pendingStudy = null;
 
 const confidenceFor = cycles => cycles < 5 ? 'Low' : cycles < CYCLES_FOR_ESTIMATE ? 'Medium' : 'High';
 const formatTime = seconds => {
@@ -81,6 +82,7 @@ fileInput.onchange = async event => {
   }));
   const rejected = checked.filter(({ duration }) => !Number.isFinite(duration) || duration > MAX_VIDEO_DURATION_SECONDS);
   studyFiles = checked.filter(({ duration }) => Number.isFinite(duration) && duration > 0 && duration <= MAX_VIDEO_DURATION_SECONDS).map(({ file }) => file);
+  pendingStudy = null;
   if (rejected.length) toast(`${rejected.length} video${rejected.length === 1 ? '' : 's'} skipped: each video must be 3 minutes or less.`);
   if (!studyFiles.length) return;
   video.src = URL.createObjectURL(studyFiles[0]);
@@ -146,6 +148,24 @@ const scanClip = async (clip, clipNumber, total) => {
   return frames;
 };
 
+const outputTextFor = output => output.output_text || output.output?.flatMap(item => item.content || []).filter(item => item.type === 'output_text' || item.type === 'text').map(item => item.text || '').join('') || '';
+const analyzeContent = async (content, key) => {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 55000);
+  try {
+    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: selectedModel(), input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
+    if (!response.ok) throw new Error((await response.json()).error?.message || 'Analysis failed');
+    return JSON.parse(outputTextFor(await response.json()) || '{}');
+  } finally { window.clearTimeout(timeout); }
+};
+const contentFor = (prompt, evidence) => {
+  const content = [{ type: 'input_text', text: prompt }];
+  evidence.forEach(frame => content.push({ type: 'input_text', text: `Video ${frame.clip}, timestamp ${formatTime(frame.time)}` }, { type: 'input_image', image_url: frame.image, detail: 'low' }));
+  return content;
+};
+const stepsText = steps => Array.isArray(steps) ? steps.map((step, index) => `${index + 1}. ${typeof step === 'string' ? step : step.step || step.name || ''}`).filter(Boolean).join('\n') : '';
+const sourcesText = sources => Array.isArray(sources) ? sources.map(source => typeof source === 'string' ? source : source.label || source.description || source.location || '').filter(Boolean).join('\n') : '';
+
 $('#analyzeBtn').onclick = async () => {
   if (!studyFiles.length) return toast('Upload a video first.');
   const key = localStorage.getItem('helios-key');
@@ -167,22 +187,52 @@ $('#analyzeBtn').onclick = async () => {
       sampleEvenly(frames, framesPerClip).forEach(frame => evidence.push({ ...frame, clip: index + 1 }));
     }
     if (analysisCancelled) throw new Error('Analysis cancelled');
-    setProgress(`Reviewing ${evidence.length} evidence frames…`);
-    const prompt = `You are a senior industrial engineer reviewing ${clips.length} continuous assembly video clip${clips.length === 1 ? '' : 's'} of the same operation. Identify repeated COMPLETE cycles inside the footage; a cycle begins at the same recognizable work-state and ends immediately before that state repeats. Count only cycles that are visibly supported by the ordered timestamped frames. Do not infer cycles from video duration or file count. Return every distinct evidence-based cycle-time opportunity. Each finding must include visible observation, a matching experiment, cautious directional time saving, category, and video/timestamp evidence. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when cycles_observed is at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":0,"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"what is visibly happening","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
-    const content = [{ type: 'input_text', text: prompt }];
-    evidence.forEach(frame => content.push({ type: 'input_text', text: `Video ${frame.clip}, timestamp ${formatTime(frame.time)}` }, { type: 'input_image', image_url: frame.image, detail: 'low' }));
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 55000);
-    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: selectedModel(), input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
-    window.clearTimeout(timeout);
-    if (!response.ok) throw new Error((await response.json()).error?.message || 'Analysis failed');
-    const output = await response.json();
-    const outputText = output.output_text || output.output?.flatMap(item => item.content || []).filter(item => item.type === 'output_text' || item.type === 'text').map(item => item.text || '').join('') || '';
-    const data = JSON.parse(outputText || '{}');
-    renderReport(data, clips.length, evidence.length, scanned);
+    setProgress('Proposing sources and cycle order…');
+    const calibrationPrompt = `You are preparing a human-confirmed setup for an industrial cycle-time study from ${clips.length} continuous assembly video clip${clips.length === 1 ? '' : 's'}. From the ordered frames, propose likely material-source containers and the likely ordered cycle steps. Never call a source or step certain: the study lead must confirm it. Do not count cycles or give opportunities yet. Return STRICT JSON: {"source_candidates":["candidate source and visible location"],"cycle_steps":["proposed step in sequence"],"setup_note":"one concise uncertainty note"}.`;
+    const calibration = await analyzeContent(contentFor(calibrationPrompt, sampleEvenly(evidence, Math.min(12, evidence.length))), key);
+    pendingStudy = { clips, evidence, scanned };
+    $('#confirmedSources').value = sourcesText(calibration.source_candidates);
+    $('#confirmedSteps').value = stepsText(calibration.cycle_steps);
+    $('#studySetup').classList.add('open');
+    $('#aiStatus').textContent = 'CONFIRM SOURCES & CYCLE ORDER';
+    toast(calibration.setup_note || 'Confirm the proposed sources and cycle order before the report runs.');
   } catch (error) {
     const message = error.name === 'AbortError' ? 'Analysis timed out. Try shorter clips or fewer videos.' : error.message;
     $('#aiStatus').textContent = message === 'Analysis cancelled' ? 'ANALYSIS CANCELLED' : 'ANALYSIS FAILED';
+    toast(message);
+  } finally {
+    button.disabled = false;
+    loader.classList.remove('open');
+  }
+};
+
+$('#cancelStudySetup').onclick = () => {
+  pendingStudy = null;
+  $('#studySetup').classList.remove('open');
+  $('#aiStatus').textContent = 'SETUP NOT CONFIRMED';
+};
+
+$('#confirmStudySetup').onclick = async () => {
+  const sources = $('#confirmedSources').value.trim();
+  const steps = $('#confirmedSteps').value.trim();
+  if (!sources || !steps) return toast('Confirm at least one material source and the cycle order before continuing.');
+  if (!pendingStudy) return toast('Run the setup review again.');
+  const key = localStorage.getItem('helios-key');
+  const button = $('#analyzeBtn');
+  const loader = ensureLoadingUi();
+  $('#studySetup').classList.remove('open');
+  analysisCancelled = false;
+  button.disabled = true;
+  loader.classList.add('open');
+  try {
+    setProgress(`Reviewing ${pendingStudy.evidence.length} evidence frames…`);
+    const prompt = `You are a senior industrial engineer reviewing ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. Identify repeated COMPLETE cycles only when the timestamped evidence visibly supports that sequence; a cycle begins at the same recognizable work-state and ends immediately before that state repeats. Do not infer cycles from video duration or file count. Return every distinct evidence-based cycle-time opportunity. A source-location finding must refer only to a confirmed source and cite video/timestamp evidence. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when cycles_observed is at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":0,"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
+    const data = await analyzeContent(contentFor(prompt, pendingStudy.evidence), key);
+    renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned);
+    pendingStudy = null;
+  } catch (error) {
+    const message = error.name === 'AbortError' ? 'Analysis timed out. Try shorter clips or fewer videos.' : error.message;
+    $('#aiStatus').textContent = 'ANALYSIS FAILED';
     toast(message);
   } finally {
     button.disabled = false;
