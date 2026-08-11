@@ -40,11 +40,26 @@ module.exports = async (request, response) => {
   }
 
   const provider = request.body.provider || 'openai';
-  if (!['openai', 'anthropic'].includes(provider)) {
-    return response.status(400).json({ error: { message: 'Choose OpenAI or Anthropic in AI Settings.' } });
+  if (!['openai', 'anthropic', 'azure-openai'].includes(provider)) {
+    return response.status(400).json({ error: { message: 'Choose a supported provider in AI Settings.' } });
   }
 
   try {
+    if (provider === 'azure-openai') {
+      const endpoint = String(request.body.azureEndpoint || '').replace(/\/+$/, '');
+      if (!/^https:\/\/[a-z0-9-]+\.openai\.azure\.com\/openai\/v1$/i.test(endpoint)) {
+        return response.status(400).json({ error: { message: 'Use a valid Azure OpenAI /openai/v1 endpoint.' } });
+      }
+      const { provider: _provider, azureEndpoint: _azureEndpoint, ...azureBody } = request.body;
+      const upstream = await fetch(`${endpoint}/responses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': authorization.replace(/^Bearer\s+/i, '') },
+        body: JSON.stringify(azureBody),
+      });
+      const body = await upstream.text();
+      return response.status(upstream.status).setHeader('Content-Type', 'application/json').send(body);
+    }
+
     if (provider === 'anthropic') {
       const message = request.body.input?.find(item => item.role === 'user');
       if (!message?.content) return response.status(400).json({ error: { message: 'Analysis request is missing content.' } });

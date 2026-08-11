@@ -35,14 +35,29 @@ const ensureLoadingUi = () => {
   return loader;
 };
 const PROVIDERS = {
-  openai: { label: 'OpenAI', model: 'gpt-5.6-sol', modelLabel: 'GPT-5.6 Sol' },
-  anthropic: { label: 'Anthropic', model: 'claude-opus-5', modelLabel: 'Claude Opus 5' },
+  'azure-openai': {
+    label: 'Azure OpenAI',
+    models: [
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+      { id: 'claude-opus-5', label: 'Claude Opus 5' },
+    ],
+  },
+  openai: { label: 'OpenAI', models: [{ id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }] },
+  anthropic: { label: 'Anthropic', models: [{ id: 'claude-opus-5', label: 'Claude Opus 5' }] },
 };
-const selectedProvider = () => localStorage.getItem('helios-provider') || 'openai';
-const selectedModel = () => PROVIDERS[selectedProvider()].model;
-const updateModelInfo = () => {
+const DEFAULT_AZURE_ENDPOINT = 'https://opsexcellence.openai.azure.com/openai/v1';
+const selectedProvider = () => localStorage.getItem('helios-provider') || 'azure-openai';
+const selectedModel = () => {
+  const provider = PROVIDERS[selectedProvider()];
+  const saved = localStorage.getItem('helios-model');
+  return provider.models.some(model => model.id === saved) ? saved : provider.models[0].id;
+};
+const updateModelOptions = () => {
   const provider = PROVIDERS[$('#provider').value];
-  $('#modelInfo').textContent = `${provider.modelLabel} is selected automatically for ${provider.label}.`;
+  const current = $('#model').value || selectedModel();
+  $('#model').innerHTML = provider.models.map(model => `<option value="${model.id}">${model.label}</option>`).join('');
+  $('#model').value = provider.models.some(model => model.id === current) ? current : provider.models[0].id;
+  $('#azureEndpointField').hidden = $('#provider').value !== 'azure-openai';
 };
 const hasReachEvidence = finding => /reach|bin|container|component location/i.test(`${finding.observation || ''} ${finding.evidence || ''}`);
 
@@ -50,7 +65,8 @@ $('#settingsBtn').onclick = () => {
   const provider = selectedProvider();
   $('#provider').value = provider;
   $('#key').value = localStorage.getItem('helios-key') || '';
-  updateModelInfo();
+  $('#azureEndpoint').value = localStorage.getItem('helios-azure-endpoint') || DEFAULT_AZURE_ENDPOINT;
+  updateModelOptions();
   $('#settings').classList.add('open');
   $('#key').focus();
 };
@@ -61,15 +77,18 @@ $('#clearSettings').onclick = () => {
   toast('Saved API key cleared.');
 };
 $('#provider').onchange = () => {
-  updateModelInfo();
+  updateModelOptions();
 };
 $('#saveSettings').onclick = () => {
   const key = $('#key').value.trim();
   if (!key) return toast('Paste an API key before saving.');
   const provider = $('#provider').value;
+  const azureEndpoint = $('#azureEndpoint').value.trim().replace(/\/+$/, '');
+  if (provider === 'azure-openai' && !azureEndpoint) return toast('Add the Azure endpoint before saving.');
   localStorage.setItem('helios-key', key);
   localStorage.setItem('helios-provider', provider);
-  localStorage.removeItem('helios-model');
+  localStorage.setItem('helios-model', $('#model').value);
+  if (provider === 'azure-openai') localStorage.setItem('helios-azure-endpoint', azureEndpoint);
   $('#settings').classList.remove('open');
   toast('AI settings saved locally.');
 };
@@ -170,7 +189,7 @@ const analyzeContent = async (content, key) => {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 55000);
   try {
-    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ provider: selectedProvider(), model: selectedModel(), input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
+    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ provider: selectedProvider(), model: selectedModel(), azureEndpoint: localStorage.getItem('helios-azure-endpoint') || DEFAULT_AZURE_ENDPOINT, input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
     if (!response.ok) throw new Error((await response.json()).error?.message || 'Analysis failed');
     return JSON.parse(outputTextFor(await response.json()) || '{}');
   } finally { window.clearTimeout(timeout); }
