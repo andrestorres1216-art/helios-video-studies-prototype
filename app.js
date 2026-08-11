@@ -34,10 +34,17 @@ const ensureLoadingUi = () => {
   }
   return loader;
 };
-const selectedModel = () => localStorage.getItem('helios-model') || 'gpt-4.1';
+const PROVIDERS = {
+  openai: { label: 'OpenAI', defaultModel: 'gpt-4.1' },
+  anthropic: { label: 'Anthropic', defaultModel: 'claude-sonnet-4-20250514' },
+};
+const selectedProvider = () => localStorage.getItem('helios-provider') || 'openai';
+const selectedModel = () => localStorage.getItem('helios-model') || PROVIDERS[selectedProvider()].defaultModel;
 const hasReachEvidence = finding => /reach|bin|container|component location/i.test(`${finding.observation || ''} ${finding.evidence || ''}`);
 
 $('#settingsBtn').onclick = () => {
+  const provider = selectedProvider();
+  $('#provider').value = provider;
   $('#key').value = localStorage.getItem('helios-key') || '';
   $('#model').value = selectedModel();
   $('#settings').classList.add('open');
@@ -49,11 +56,18 @@ $('#clearSettings').onclick = () => {
   $('#key').value = '';
   toast('Saved API key cleared.');
 };
+$('#provider').onchange = () => {
+  const provider = $('#provider').value;
+  const oldDefault = PROVIDERS[selectedProvider()]?.defaultModel;
+  if (!$('#model').value.trim() || $('#model').value.trim() === oldDefault) $('#model').value = PROVIDERS[provider].defaultModel;
+};
 $('#saveSettings').onclick = () => {
   const key = $('#key').value.trim();
   if (!key) return toast('Paste an API key before saving.');
+  const provider = $('#provider').value;
   localStorage.setItem('helios-key', key);
-  localStorage.setItem('helios-model', $('#model').value.trim() || 'gpt-4.1');
+  localStorage.setItem('helios-provider', provider);
+  localStorage.setItem('helios-model', $('#model').value.trim() || PROVIDERS[provider].defaultModel);
   $('#settings').classList.remove('open');
   toast('AI settings saved locally.');
 };
@@ -154,7 +168,7 @@ const analyzeContent = async (content, key) => {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 55000);
   try {
-    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model: selectedModel(), input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
+    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ provider: selectedProvider(), model: selectedModel(), input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
     if (!response.ok) throw new Error((await response.json()).error?.message || 'Analysis failed');
     return JSON.parse(outputTextFor(await response.json()) || '{}');
   } finally { window.clearTimeout(timeout); }

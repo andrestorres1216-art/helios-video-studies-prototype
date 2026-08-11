@@ -1,6 +1,6 @@
 {
   "name": "opex-cycle-time-studies",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpEx Cycle Time Studies desktop app",
   "main": "main.cjs",
   "scripts": {
