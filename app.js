@@ -4,6 +4,7 @@ const fileInput = $('#file');
 const MAX_VIDEOS = 10;
 const MAX_VIDEO_DURATION_SECONDS = 3 * 60;
 const CYCLES_FOR_ESTIMATE = 10;
+const MAX_IMAGES_PER_ANALYSIS_REQUEST = 10;
 let studyFiles = [];
 let analysisCancelled = false;
 let pendingStudy = null;
@@ -225,7 +226,7 @@ $('#analyzeBtn').onclick = async () => {
     if (analysisCancelled) throw new Error('Analysis cancelled');
     setProgress('Proposing sources and cycle order…');
     const calibrationPrompt = `You are preparing a human-confirmed setup for an industrial cycle-time study from ${clips.length} continuous assembly video clip${clips.length === 1 ? '' : 's'}. From the ordered frames, propose likely material-source containers and the likely ordered cycle steps. Never call a source or step certain: the study lead must confirm it. Do not count cycles or give opportunities yet. Return STRICT JSON: {"source_candidates":["candidate source and visible location"],"cycle_steps":["proposed step in sequence"],"setup_note":"one concise uncertainty note"}.`;
-    const calibration = await analyzeContent(contentFor(calibrationPrompt, sampleEvenly(evidence, Math.min(12, evidence.length))), key);
+    const calibration = await analyzeContent(contentFor(calibrationPrompt, sampleEvenly(evidence, Math.min(MAX_IMAGES_PER_ANALYSIS_REQUEST, evidence.length))), key);
     pendingStudy = { clips, evidence, scanned };
     $('#confirmedSources').value = sourcesText(calibration.source_candidates);
     $('#confirmedSteps').value = stepsText(calibration.cycle_steps);
@@ -266,7 +267,7 @@ $('#confirmStudySetup').onclick = async () => {
   try {
     setProgress(`Reviewing ${pendingStudy.evidence.length} evidence frames…`);
     const prompt = `You are a senior industrial engineer reviewing ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Use timestamped frames to check whether the confirmed sequence is visible, but do not infer cycles from video duration or file count. Return every distinct evidence-based cycle-time opportunity. A source-location finding must refer only to a confirmed source and cite video/timestamp evidence. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
-    const data = await analyzeContent(contentFor(prompt, pendingStudy.evidence), key);
+    const data = await analyzeContent(contentFor(prompt, sampleEvenly(pendingStudy.evidence, MAX_IMAGES_PER_ANALYSIS_REQUEST)), key);
     data.cycles_observed = confirmedCycles;
     renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned, true);
     pendingStudy = null;
