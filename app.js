@@ -194,6 +194,38 @@ const timeSplitFromBatches = (reports, expectedFrames) => {
     excluded_frames: uncertainOrRequired,
   };
 };
+const evidencePointsFor = finding => (Array.isArray(finding?.evidence_points) ? finding.evidence_points : [])
+  .map(point => ({ clip: Number(point.clip), time: Number(point.time_seconds) }))
+  .filter(point => Number.isInteger(point.clip) && point.clip >= 1 && point.clip <= studyFiles.length && Number.isFinite(point.time) && point.time >= 0)
+  .slice(0, 3);
+const evidenceHtml = finding => {
+  const text = escapeHtml(finding?.evidence || 'Visible evidence in the reviewed video.');
+  const links = evidencePointsFor(finding).map(point => `<button type="button" class="evidence-link" data-clip="${point.clip}" data-time="${point.time}">Clip ${point.clip} · ${formatTime(point.time)}</button>`).join('');
+  return `${text}${links ? ` ${links}` : ''}`;
+};
+const potentialReductionFrom = findings => {
+  const included = findings.map((finding, index) => ({ estimate: finding?.reduction_to_validate, index: index + 1 }))
+    .filter(({ estimate }) => estimate?.independent === true)
+    .map(({ estimate, index }) => ({ low: Number(estimate.low_sec_per_cycle), high: Number(estimate.high_sec_per_cycle), index }))
+    .filter(({ low, high }) => Number.isFinite(low) && Number.isFinite(high) && low >= 0 && high >= low && high <= 60);
+  if (!included.length) return null;
+  return { low: included.reduce((sum, item) => sum + item.low, 0), high: included.reduce((sum, item) => sum + item.high, 0), indexes: included.map(item => item.index) };
+};
+const formatSeconds = seconds => Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1).replace(/\.0$/, '');
+const bindEvidenceLinks = () => document.querySelectorAll('.evidence-link').forEach(link => {
+  link.onclick = async () => {
+    const clipNumber = Number(link.dataset.clip);
+    const seconds = Number(link.dataset.time);
+    const clip = studyFiles[clipNumber - 1];
+    if (!clip || !Number.isFinite(seconds)) return toast('That evidence clip is no longer available.');
+    try {
+      await loadClip(clip);
+      video.currentTime = Math.min(seconds, Math.max(0, video.duration - .1));
+      video.play().catch(() => {});
+      $('#studyStatus').textContent = `Viewing evidence · clip ${clipNumber} at ${formatTime(seconds)}`;
+    } catch { toast('Could not open the evidence clip.'); }
+  };
+});
 const scanClip = async (clip, clipNumber, total) => {
   await loadClip(clip);
   // Preserve one timestamped evidence frame per second for every accepted clip.
@@ -292,11 +324,11 @@ $('#confirmStudySetup').onclick = async () => {
     const batchReports = [];
     for (let index = 0; index < batches.length; index += 1) {
       setProgress(`Reviewing evidence batch ${index + 1}/${batches.length} (${batches[index].length} frames)…`);
-      const batchPrompt = `You are a senior industrial engineer reviewing chronological evidence batch ${index + 1} of ${batches.length} from a continuous assembly video study. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; do not substitute an AI estimate. Report only visible, evidence-based work-method opportunities in these timestamped frames. A source-location finding must refer only to a confirmed source. Separate visible observation from the experiment to test it; mark unproven mechanism as a hypothesis. Do not present results as measured. Also classify all ${batches[index].length} sampled frames by their visible state: value-added = directly changes the product in the confirmed cycle; avoidable waste = visible reach, search, regrip, waiting, or avoidable motion; uncertain-or-required = cannot be reliably classified from the frame or may be required work. Do not call required inspection, safety, or quality work waste without clear visual evidence. The three frame counts must be non-negative integers totaling exactly ${batches[index].length}. Return STRICT JSON: {"batch_summary":"one sentence","time_split":{"value_added_frames":0,"avoidable_waste_frames":0,"uncertain_or_required_frames":0,"basis":"brief visual basis with timestamps"},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise uncertainty note"}. Include at most 5 distinct findings.`;
+      const batchPrompt = `You are a senior industrial engineer reviewing chronological evidence batch ${index + 1} of ${batches.length} from a continuous assembly video study. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; do not substitute an AI estimate. Report only visible, evidence-based work-method opportunities in these timestamped frames. A source-location finding must refer only to a confirmed source. Separate visible observation from the experiment to test it; mark unproven mechanism as a hypothesis. Do not present results as measured. Every finding must include one to three structured evidence_points using the exact clip number and timestamp supplied with the frame. Also classify all ${batches[index].length} sampled frames by their visible state: value-added = directly changes the product in the confirmed cycle; avoidable waste = visible reach, search, regrip, waiting, or avoidable motion; uncertain-or-required = cannot be reliably classified from the frame or may be required work. Do not call required inspection, safety, or quality work waste without clear visual evidence. The three frame counts must be non-negative integers totaling exactly ${batches[index].length}. Return STRICT JSON: {"batch_summary":"one sentence","time_split":{"value_added_frames":0,"avoidable_waste_frames":0,"uncertain_or_required_frames":0,"basis":"brief visual basis with timestamps"},"findings":[{"observation":"visible fact only","evidence":"short evidence sentence","evidence_points":[{"clip":1,"time_seconds":0}],"experiment":"specific change to test","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise uncertainty note"}. Include at most 5 distinct findings.`;
       batchReports.push(await analyzeContent(contentFor(batchPrompt, batches[index]), key));
     }
     setProgress('Synthesizing findings across all evidence batches…');
-    const synthesisPrompt = `You are a senior industrial engineer synthesizing chronological evidence-batch reviews from ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Deduplicate overlapping findings across batches. Retain only evidence-based findings with their video/timestamp evidence; a source-location finding must refer only to a confirmed source. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Do not present any result as measured. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}. Evidence-batch reviews follow:\n${JSON.stringify(batchReports)}`;
+    const synthesisPrompt = `You are a senior industrial engineer synthesizing chronological evidence-batch reviews from ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Deduplicate overlapping findings across batches. Retain only evidence-based findings with their structured clip/timestamp evidence_points; do not invent timestamps or alter clip numbers. A source-location finding must refer only to a confirmed source. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Do not present any result as measured. For each finding, provide reduction_to_validate only when the visible evidence supports a conservative directional range; never use a generic range, never imply precision below one second, and use zeroes when no defensible range is possible. Set independent true only if its experiment does not overlap with another included experiment; when uncertain, set it false. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0 sec/cycle or empty string","findings":[{"observation":"visible fact only","evidence":"short evidence sentence","evidence_points":[{"clip":1,"time_seconds":0}],"experiment":"specific change to test","reduction_to_validate":{"low_sec_per_cycle":0,"high_sec_per_cycle":0,"independent":false,"basis":"why this range is or is not defensible from the video"},"category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}. Evidence-batch reviews follow:\n${JSON.stringify(batchReports)}`;
     const data = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }], key);
     data.cycles_observed = confirmedCycles;
     data.time_distribution = timeSplitFromBatches(batchReports, pendingStudy.evidence.length);
@@ -350,8 +382,17 @@ function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerCon
   $('#aiStatus').textContent = `REPORT COMPLETE · ${videoCount} CLIP${videoCount === 1 ? '' : 'S'}`;
   $('#reachTag').hidden = !findings.some(hasReachEvidence);
   const review = `<div class="review-summary"><b>Study report:</b> ${escapeHtml(data.summary || 'Review complete.')}<br><span>${escapeHtml(data.limitations || `Reviewed ${evidenceCount} frames from ${scannedCount} local scans.`)}</span></div>`;
-  const rows = findings.length ? `<div class="eyebrow" style="margin-top:16px">OBSERVATIONS &amp; EXPERIMENTS</div>${findings.map((finding, index) => `<div class="finding"><div class="rank">${String(index + 1).padStart(2, '0')}</div><div class="finding-label">OBSERVATION</div><div class="finding-copy">${escapeHtml(`${finding.observation || ''} ${finding.evidence || ''}`)}</div><div class="finding-label">EXPERIMENT TO RUN</div><div class="finding-copy">${escapeHtml(finding.experiment || 'Define a controlled work-method test')}</div><div class="saving">Estimated saving: ${escapeHtml(finding.estimated_savings || 'Preliminary — validate with timed cycles')}</div></div>`).join('')}` : '<div class="detail" style="padding:14px 0">No finding was supported by this evidence set.</div>';
+  const potential = potentialReductionFrom(findings);
+  const rows = findings.length ? `<div class="eyebrow" style="margin-top:16px">OBSERVATIONS &amp; EXPERIMENTS</div>${findings.map((finding, index) => {
+    const estimate = finding.reduction_to_validate;
+    const low = Number(estimate?.low_sec_per_cycle);
+    const high = Number(estimate?.high_sec_per_cycle);
+    const hasEstimate = Number.isFinite(low) && Number.isFinite(high) && high >= low && high > 0;
+    const reduction = hasEstimate ? `<div class="saving">Reduction to validate: ${formatSeconds(low)}–${formatSeconds(high)} sec/cycle</div>` : '';
+    return `<div class="finding"><div class="rank">${String(index + 1).padStart(2, '0')}</div><div class="finding-label">OBSERVATION</div><div class="finding-copy">${escapeHtml(finding.observation || '')} ${evidenceHtml(finding)}</div><div class="finding-label">EXPERIMENT TO RUN</div><div class="finding-copy">${escapeHtml(finding.experiment || 'Define a controlled work-method test')}</div>${reduction}</div>`;
+  }).join('')}${potential ? `<div class="reduction-total"><span>Potential cycle-time reduction to validate</span><strong>${formatSeconds(potential.low)}–${formatSeconds(potential.high)} sec/cycle</strong><small>Totals only independent experiments ${potential.indexes.join(', ')}; verify with a before/after timed study.</small></div>` : '<div class="reduction-total muted-total"><span>Potential cycle-time reduction</span><small>Not totaled: the video did not support independent, non-overlapping time ranges. Validate with a timed study.</small></div>'}` : '<div class="detail" style="padding:14px 0">No finding was supported by this evidence set.</div>';
   $('#opportunityRows').innerHTML = review + rows;
+  bindEvidenceLinks();
   $('#analysisHint').innerHTML = `<b>Report complete:</b> ${videoCount} video${videoCount === 1 ? '' : 's'} reviewed; ${observedCycles} complete cycles observed. Confidence: ${confidenceFor(observedCycles)}.`;
   toast('Work-method report complete.');
 }
