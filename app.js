@@ -439,7 +439,8 @@ function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerCon
     const low = Number(estimate?.low_sec_per_cycle);
     const high = Number(estimate?.high_sec_per_cycle);
     const hasEstimate = Number.isFinite(low) && Number.isFinite(high) && high >= low && high > 0;
-    const reduction = hasEstimate ? `<div class="saving">Reduction to validate: ${formatSeconds(low)}–${formatSeconds(high)} sec/cycle</div>` : '';
+    const confidence = ['low', 'medium', 'high'].includes(estimate?.confidence) ? estimate.confidence : 'low';
+    const reduction = hasEstimate ? `<div class="saving">AI estimate: ${formatSeconds(low)}–${formatSeconds(high)} sec/cycle · ${confidence} confidence</div><div class="detail">${escapeHtml(estimate.basis || 'Estimated from dense timestamped video frames.')}</div>` : '';
     return `<div class="finding"><div class="rank">${String(index + 1).padStart(2, '0')}</div><div class="finding-label">OBSERVATION</div><div class="finding-copy">${escapeHtml(finding.observation || '')} ${evidenceHtml(finding)}</div><div class="finding-label">EXPERIMENT TO RUN</div><div class="finding-copy">${escapeHtml(finding.experiment || 'Define a controlled work-method test')}</div>${reduction}</div>`;
   }).join('')}${potential ? `<div class="reduction-total"><span>Potential cycle-time reduction to validate</span><strong>${formatSeconds(potential.low)}–${formatSeconds(potential.high)} sec/cycle</strong><small>Totals only independent experiments ${potential.indexes.join(', ')}; verify with a before/after timed study.</small></div>` : '<div class="reduction-total muted-total"><span>Potential cycle-time reduction</span><small>Not totaled: the video did not support independent, non-overlapping time ranges. Validate with a timed study.</small></div>'}` : '<div class="detail" style="padding:14px 0">No finding was supported by this evidence set.</div>';
   $('#opportunityRows').innerHTML = review + rows;
