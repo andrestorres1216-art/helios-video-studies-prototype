@@ -4,7 +4,7 @@ const fileInput = $('#file');
 const MAX_VIDEOS = 10;
 const MAX_VIDEO_DURATION_SECONDS = 3 * 60;
 const CYCLES_FOR_ESTIMATE = 10;
-const MAX_IMAGES_PER_ANALYSIS_REQUEST = 10;
+const MAX_IMAGES_PER_ANALYSIS_BATCH = 10;
 let studyFiles = [];
 let analysisCancelled = false;
 let pendingStudy = null;
@@ -172,6 +172,7 @@ const sampleEvenly = (items, count) => {
   if (items.length <= count) return items;
   return Array.from({ length: count }, (_, index) => items[Math.round(index * (items.length - 1) / (count - 1))]);
 };
+const chunk = (items, size) => Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size));
 const scanClip = async (clip, clipNumber, total) => {
   await loadClip(clip);
   const scanCount = Math.min(60, Math.max(24, Math.ceil(video.duration)));
@@ -226,7 +227,7 @@ $('#analyzeBtn').onclick = async () => {
     if (analysisCancelled) throw new Error('Analysis cancelled');
     setProgress('Proposing sources and cycle order…');
     const calibrationPrompt = `You are preparing a human-confirmed setup for an industrial cycle-time study from ${clips.length} continuous assembly video clip${clips.length === 1 ? '' : 's'}. From the ordered frames, propose likely material-source containers and the likely ordered cycle steps. Never call a source or step certain: the study lead must confirm it. Do not count cycles or give opportunities yet. Return STRICT JSON: {"source_candidates":["candidate source and visible location"],"cycle_steps":["proposed step in sequence"],"setup_note":"one concise uncertainty note"}.`;
-    const calibration = await analyzeContent(contentFor(calibrationPrompt, sampleEvenly(evidence, Math.min(MAX_IMAGES_PER_ANALYSIS_REQUEST, evidence.length))), key);
+    const calibration = await analyzeContent(contentFor(calibrationPrompt, sampleEvenly(evidence, Math.min(MAX_IMAGES_PER_ANALYSIS_BATCH, evidence.length))), key);
     pendingStudy = { clips, evidence, scanned };
     $('#confirmedSources').value = sourcesText(calibration.source_candidates);
     $('#confirmedSteps').value = stepsText(calibration.cycle_steps);
@@ -265,9 +266,16 @@ $('#confirmStudySetup').onclick = async () => {
   button.disabled = true;
   loader.classList.add('open');
   try {
-    setProgress(`Reviewing ${pendingStudy.evidence.length} evidence frames…`);
-    const prompt = `You are a senior industrial engineer reviewing ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Use timestamped frames to check whether the confirmed sequence is visible, but do not infer cycles from video duration or file count. Return every distinct evidence-based cycle-time opportunity. A source-location finding must refer only to a confirmed source and cite video/timestamp evidence. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}`;
-    const data = await analyzeContent(contentFor(prompt, sampleEvenly(pendingStudy.evidence, MAX_IMAGES_PER_ANALYSIS_REQUEST)), key);
+    const batches = chunk(pendingStudy.evidence, MAX_IMAGES_PER_ANALYSIS_BATCH);
+    const batchReports = [];
+    for (let index = 0; index < batches.length; index += 1) {
+      setProgress(`Reviewing evidence batch ${index + 1}/${batches.length} (${batches[index].length} frames)…`);
+      const batchPrompt = `You are a senior industrial engineer reviewing chronological evidence batch ${index + 1} of ${batches.length} from a continuous assembly video study. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; do not substitute an AI estimate. Report only visible, evidence-based work-method opportunities in these timestamped frames. A source-location finding must refer only to a confirmed source. Separate visible observation from the experiment to test it; mark unproven mechanism as a hypothesis. Do not present results as measured. Return STRICT JSON: {"batch_summary":"one sentence","findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise uncertainty note"}. Include at most 5 distinct findings.`;
+      batchReports.push(await analyzeContent(contentFor(batchPrompt, batches[index]), key));
+    }
+    setProgress('Synthesizing findings across all evidence batches…');
+    const synthesisPrompt = `You are a senior industrial engineer synthesizing chronological evidence-batch reviews from ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Deduplicate overlapping findings across batches. Retain only evidence-based findings with their video/timestamp evidence; a source-location finding must refer only to a confirmed source. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}. Evidence-batch reviews follow:\n${JSON.stringify(batchReports)}`;
+    const data = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }], key);
     data.cycles_observed = confirmedCycles;
     renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned, true);
     pendingStudy = null;
