@@ -35,18 +35,22 @@ const ensureLoadingUi = () => {
   return loader;
 };
 const PROVIDERS = {
-  openai: { label: 'OpenAI', defaultModel: 'gpt-4.1' },
-  anthropic: { label: 'Anthropic', defaultModel: 'claude-sonnet-4-20250514' },
+  openai: { label: 'OpenAI', model: 'gpt-4.1', modelLabel: 'GPT-4.1' },
+  anthropic: { label: 'Anthropic', model: 'claude-sonnet-4-20250514', modelLabel: 'Claude Sonnet 4' },
 };
 const selectedProvider = () => localStorage.getItem('helios-provider') || 'openai';
-const selectedModel = () => localStorage.getItem('helios-model') || PROVIDERS[selectedProvider()].defaultModel;
+const selectedModel = () => PROVIDERS[selectedProvider()].model;
+const updateModelInfo = () => {
+  const provider = PROVIDERS[$('#provider').value];
+  $('#modelInfo').textContent = `${provider.modelLabel} is selected automatically for ${provider.label}.`;
+};
 const hasReachEvidence = finding => /reach|bin|container|component location/i.test(`${finding.observation || ''} ${finding.evidence || ''}`);
 
 $('#settingsBtn').onclick = () => {
   const provider = selectedProvider();
   $('#provider').value = provider;
   $('#key').value = localStorage.getItem('helios-key') || '';
-  $('#model').value = selectedModel();
+  updateModelInfo();
   $('#settings').classList.add('open');
   $('#key').focus();
 };
@@ -57,9 +61,7 @@ $('#clearSettings').onclick = () => {
   toast('Saved API key cleared.');
 };
 $('#provider').onchange = () => {
-  const provider = $('#provider').value;
-  const oldDefault = PROVIDERS[selectedProvider()]?.defaultModel;
-  if (!$('#model').value.trim() || $('#model').value.trim() === oldDefault) $('#model').value = PROVIDERS[provider].defaultModel;
+  updateModelInfo();
 };
 $('#saveSettings').onclick = () => {
   const key = $('#key').value.trim();
@@ -67,7 +69,7 @@ $('#saveSettings').onclick = () => {
   const provider = $('#provider').value;
   localStorage.setItem('helios-key', key);
   localStorage.setItem('helios-provider', provider);
-  localStorage.setItem('helios-model', $('#model').value.trim() || PROVIDERS[provider].defaultModel);
+  localStorage.removeItem('helios-model');
   $('#settings').classList.remove('open');
   toast('AI settings saved locally.');
 };
