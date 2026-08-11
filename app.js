@@ -173,6 +173,26 @@ const sampleEvenly = (items, count) => {
   return Array.from({ length: count }, (_, index) => items[Math.round(index * (items.length - 1) / (count - 1))]);
 };
 const chunk = (items, size) => Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size));
+const timeSplitFromBatches = (reports, expectedFrames) => {
+  let valueAdded = 0;
+  let avoidableWaste = 0;
+  let uncertainOrRequired = 0;
+  for (const report of reports) {
+    const split = report?.time_split || {};
+    const values = ['value_added_frames', 'avoidable_waste_frames', 'uncertain_or_required_frames']
+      .map(key => Number(split[key]));
+    if (!values.every(value => Number.isInteger(value) && value >= 0) || values.reduce((sum, value) => sum + value, 0) === 0) return null;
+    [valueAdded, avoidableWaste, uncertainOrRequired] = [valueAdded + values[0], avoidableWaste + values[1], uncertainOrRequired + values[2]];
+  }
+  const classified = valueAdded + avoidableWaste;
+  if (!classified || valueAdded + avoidableWaste + uncertainOrRequired !== expectedFrames) return null;
+  return {
+    value_added_pct: Math.round(valueAdded / classified * 100),
+    waste_pct: 100 - Math.round(valueAdded / classified * 100),
+    classified_frames: classified,
+    excluded_frames: uncertainOrRequired,
+  };
+};
 const scanClip = async (clip, clipNumber, total) => {
   await loadClip(clip);
   const scanCount = Math.min(60, Math.max(24, Math.ceil(video.duration)));
@@ -270,13 +290,14 @@ $('#confirmStudySetup').onclick = async () => {
     const batchReports = [];
     for (let index = 0; index < batches.length; index += 1) {
       setProgress(`Reviewing evidence batch ${index + 1}/${batches.length} (${batches[index].length} frames)…`);
-      const batchPrompt = `You are a senior industrial engineer reviewing chronological evidence batch ${index + 1} of ${batches.length} from a continuous assembly video study. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; do not substitute an AI estimate. Report only visible, evidence-based work-method opportunities in these timestamped frames. A source-location finding must refer only to a confirmed source. Separate visible observation from the experiment to test it; mark unproven mechanism as a hypothesis. Do not present results as measured. Return STRICT JSON: {"batch_summary":"one sentence","findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise uncertainty note"}. Include at most 5 distinct findings.`;
+      const batchPrompt = `You are a senior industrial engineer reviewing chronological evidence batch ${index + 1} of ${batches.length} from a continuous assembly video study. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; do not substitute an AI estimate. Report only visible, evidence-based work-method opportunities in these timestamped frames. A source-location finding must refer only to a confirmed source. Separate visible observation from the experiment to test it; mark unproven mechanism as a hypothesis. Do not present results as measured. Also classify all ${batches[index].length} sampled frames by their visible state: value-added = directly changes the product in the confirmed cycle; avoidable waste = visible reach, search, regrip, waiting, or avoidable motion; uncertain-or-required = cannot be reliably classified from the frame or may be required work. Do not call required inspection, safety, or quality work waste without clear visual evidence. The three frame counts must be non-negative integers totaling exactly ${batches[index].length}. Return STRICT JSON: {"batch_summary":"one sentence","time_split":{"value_added_frames":0,"avoidable_waste_frames":0,"uncertain_or_required_frames":0,"basis":"brief visual basis with timestamps"},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise uncertainty note"}. Include at most 5 distinct findings.`;
       batchReports.push(await analyzeContent(contentFor(batchPrompt, batches[index]), key));
     }
     setProgress('Synthesizing findings across all evidence batches…');
-    const synthesisPrompt = `You are a senior industrial engineer synthesizing chronological evidence-batch reviews from ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Deduplicate overlapping findings across batches. Retain only evidence-based findings with their video/timestamp evidence; a source-location finding must refer only to a confirmed source. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Value-added is product-changing work; waste is reach, search, regrip, waiting, and avoidable motion. Do not present any result as measured. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","time_distribution":{"value_added_pct":0,"waste_pct":0},"findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}. Evidence-batch reviews follow:\n${JSON.stringify(batchReports)}`;
+    const synthesisPrompt = `You are a senior industrial engineer synthesizing chronological evidence-batch reviews from ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Deduplicate overlapping findings across batches. Retain only evidence-based findings with their video/timestamp evidence; a source-location finding must refer only to a confirmed source. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Do not present any result as measured. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0.0 sec/cycle or empty string","findings":[{"observation":"visible fact only","evidence":"video/timestamp evidence","experiment":"specific change to test","estimated_savings":"Preliminary: ~0.5–1.0 sec/cycle","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}. Evidence-batch reviews follow:\n${JSON.stringify(batchReports)}`;
     const data = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }], key);
     data.cycles_observed = confirmedCycles;
+    data.time_distribution = timeSplitFromBatches(batchReports, pendingStudy.evidence.length);
     renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned, true);
     pendingStudy = null;
   } catch (error) {
@@ -303,9 +324,25 @@ function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerCon
     const missing = Math.max(0, CYCLES_FOR_ESTIMATE - observedCycles);
     $('#cycleLabel').textContent = `${observedCycles}/${CYCLES_FOR_ESTIMATE} complete cycles observed — ${missing} more needed for an AI estimate`;
   }
-  $('#distributionLabel').textContent = 'TIME SPLIT';
-  $('#lossBar').style.opacity = '.28';
-  $('#lossLegend').innerHTML = '<span>Not estimated from video frames. Use a timed study to measure value-added and waste time.</span>';
+  const distribution = data.time_distribution;
+  const valueAdded = Number(distribution?.value_added_pct);
+  const waste = Number(distribution?.waste_pct);
+  const hasVideoSplit = Number.isInteger(valueAdded) && Number.isInteger(waste) && valueAdded >= 0 && waste >= 0 && valueAdded + waste === 100;
+  if (hasVideoSplit) {
+    $('#distributionLabel').textContent = 'VIDEO-DERIVED TIME SPLIT';
+    $('#lossBar').style.opacity = '1';
+    $('#valueAddedBar').style.width = `${valueAdded}%`;
+    $('#valueAddedBar').style.background = '#2485c7';
+    $('#wasteBar').style.width = `${waste}%`;
+    $('#wasteBar').style.background = '#e7b85c';
+    const classified = distribution.classified_frames || 0;
+    const excluded = distribution.excluded_frames || 0;
+    $('#lossLegend').innerHTML = `<span><i class="dot" style="background:#2485c7"></i>Value-added (sampled estimate) <b>${valueAdded}%</b></span><span><i class="dot" style="background:#e7b85c"></i>Observed waste (sampled estimate) <b>${waste}%</b></span><span>Based on ${classified} visually classified frames${excluded ? `; ${excluded} uncertain/required frames excluded` : ''}. Verify with timed observation.</span>`;
+  } else {
+    $('#distributionLabel').textContent = 'TIME SPLIT';
+    $('#lossBar').style.opacity = '.28';
+    $('#lossLegend').innerHTML = '<span>Video evidence could not support a time-split estimate. Use a timed study to measure value-added and waste time.</span>';
+  }
   $('#confidence').textContent = confidenceFor(observedCycles);
   $('#studyStatus').textContent = 'Study report ready';
   $('#aiStatus').textContent = `REPORT COMPLETE · ${videoCount} CLIP${videoCount === 1 ? '' : 'S'}`;
