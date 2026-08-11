@@ -292,8 +292,6 @@ $('#confirmStudySetup').onclick = async () => {
 function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerConfirmedCycles = false) {
   const findings = Array.isArray(data.findings) ? data.findings : [];
   const cycles = Number(data.cycles_observed);
-  const valueAdded = Number(data.time_distribution?.value_added_pct);
-  const waste = Number(data.time_distribution?.waste_pct);
   $('#cycles').textContent = Number.isFinite(cycles) ? cycles : '—';
   $('#cyclesLabel').textContent = reviewerConfirmedCycles ? 'reviewer-confirmed cycles' : 'cycles observed';
   const observedCycles = Number.isFinite(cycles) ? cycles : 0;
@@ -305,15 +303,9 @@ function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerCon
     const missing = Math.max(0, CYCLES_FOR_ESTIMATE - observedCycles);
     $('#cycleLabel').textContent = `${observedCycles}/${CYCLES_FOR_ESTIMATE} complete cycles observed — ${missing} more needed for an AI estimate`;
   }
-  if (Number.isFinite(valueAdded) && Number.isFinite(waste)) {
-    const total = valueAdded + waste || 100;
-    const valuePct = Math.round(valueAdded / total * 100);
-    const wastePct = 100 - valuePct;
-    $('#lossBar').style.opacity = '1';
-    $('#valueAddedBar').style.width = `${valuePct}%`;
-    $('#wasteBar').style.width = `${wastePct}%`;
-    $('#lossLegend').innerHTML = `<span><i class="dot" style="background:#2485c7"></i>Value-added (AI estimate) <b>${valuePct}%</b></span><span><i class="dot" style="background:#e7b85c"></i>Waste (AI estimate) <b>${wastePct}%</b></span>`;
-  }
+  $('#distributionLabel').textContent = 'TIME SPLIT';
+  $('#lossBar').style.opacity = '.28';
+  $('#lossLegend').innerHTML = '<span>Not estimated from video frames. Use a timed study to measure value-added and waste time.</span>';
   $('#confidence').textContent = confidenceFor(observedCycles);
   $('#studyStatus').textContent = 'Study report ready';
   $('#aiStatus').textContent = `REPORT COMPLETE · ${videoCount} CLIP${videoCount === 1 ? '' : 'S'}`;
