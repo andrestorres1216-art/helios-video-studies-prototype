@@ -56,7 +56,7 @@ module.exports = async (request, response) => {
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: request.body.model || 'claude-sonnet-4-20250514',
+          model: request.body.model || 'claude-opus-5',
           max_tokens: 4096,
           messages: [{ role: 'user', content: anthropicContent(message.content) }],
         }),

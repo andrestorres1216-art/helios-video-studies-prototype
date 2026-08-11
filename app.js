@@ -35,8 +35,8 @@ const ensureLoadingUi = () => {
   return loader;
 };
 const PROVIDERS = {
-  openai: { label: 'OpenAI', model: 'gpt-4.1', modelLabel: 'GPT-4.1' },
-  anthropic: { label: 'Anthropic', model: 'claude-sonnet-4-20250514', modelLabel: 'Claude Sonnet 4' },
+  openai: { label: 'OpenAI', model: 'gpt-5.6-sol', modelLabel: 'GPT-5.6 Sol' },
+  anthropic: { label: 'Anthropic', model: 'claude-opus-5', modelLabel: 'Claude Opus 5' },
 };
 const selectedProvider = () => localStorage.getItem('helios-provider') || 'openai';
 const selectedModel = () => PROVIDERS[selectedProvider()].model;
