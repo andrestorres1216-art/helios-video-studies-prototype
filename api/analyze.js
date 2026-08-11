@@ -29,7 +29,9 @@ module.exports = async (request, response) => {
   const clientIp = String(request.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
   const now = Date.now();
   const recentRequests = (requestsByIp.get(clientIp) || []).filter(time => now - time < 60 * 60 * 1000);
-  if (recentRequests.length >= 12) {
+  // A full 3-minute study can require many Azure-safe image batches. This is
+  // intentionally a generous abuse safeguard, not an evidence-quality cap.
+  if (recentRequests.length >= 250) {
     return response.status(429).json({ error: { message: 'Analysis limit reached. Try again in an hour.' } });
   }
   recentRequests.push(now);

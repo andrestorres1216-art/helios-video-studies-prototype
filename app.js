@@ -5,6 +5,7 @@ const MAX_VIDEOS = 10;
 const MAX_VIDEO_DURATION_SECONDS = 3 * 60;
 const CYCLES_FOR_ESTIMATE = 10;
 const MAX_IMAGES_PER_ANALYSIS_BATCH = 10;
+const EVIDENCE_FRAMES_PER_SECOND = 1;
 let studyFiles = [];
 let analysisCancelled = false;
 let pendingStudy = null;
@@ -195,7 +196,9 @@ const timeSplitFromBatches = (reports, expectedFrames) => {
 };
 const scanClip = async (clip, clipNumber, total) => {
   await loadClip(clip);
-  const scanCount = Math.min(60, Math.max(24, Math.ceil(video.duration)));
+  // Preserve one timestamped evidence frame per second for every accepted clip.
+  // Azure's limit is handled only at request batching time below.
+  const scanCount = Math.min(MAX_VIDEO_DURATION_SECONDS * EVIDENCE_FRAMES_PER_SECOND, Math.max(24, Math.ceil(video.duration * EVIDENCE_FRAMES_PER_SECOND)));
   const frames = [];
   for (let index = 0; index < scanCount; index += 1) {
     if (analysisCancelled) throw new Error('Analysis cancelled');
@@ -237,12 +240,11 @@ $('#analyzeBtn').onclick = async () => {
   try {
     const clips = studyFiles;
     const evidence = [];
-    const framesPerClip = Math.max(4, Math.min(60, Math.floor(60 / clips.length)));
     let scanned = 0;
     for (let index = 0; index < clips.length; index += 1) {
       const frames = await scanClip(clips[index], index + 1, clips.length);
       scanned += frames.length;
-      sampleEvenly(frames, framesPerClip).forEach(frame => evidence.push({ ...frame, clip: index + 1 }));
+      frames.forEach(frame => evidence.push({ ...frame, clip: index + 1 }));
     }
     if (analysisCancelled) throw new Error('Analysis cancelled');
     setProgress('Proposing sources and cycle order…');
