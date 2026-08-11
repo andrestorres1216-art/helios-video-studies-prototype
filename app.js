@@ -256,6 +256,50 @@ const contentFor = (prompt, evidence) => {
   evidence.forEach(frame => content.push({ type: 'input_text', text: `Video ${frame.clip}, timestamp ${formatTime(frame.time)}` }, { type: 'input_image', image_url: frame.image, detail: 'low' }));
   return content;
 };
+const DENSE_EVIDENCE_FPS = 5;
+const DENSE_EVIDENCE_WINDOW_SECONDS = 4;
+const denseEvidenceFor = async finding => {
+  const frames = [];
+  for (const point of evidencePointsFor(finding)) {
+    const clip = studyFiles[point.clip - 1];
+    if (!clip) continue;
+    try {
+      await loadClip(clip);
+      const start = Math.max(0, point.time - DENSE_EVIDENCE_WINDOW_SECONDS / 2);
+      const end = Math.min(Math.max(0, video.duration - .1), point.time + DENSE_EVIDENCE_WINDOW_SECONDS / 2);
+      for (let time = start; time <= end + .001; time += 1 / DENSE_EVIDENCE_FPS) {
+        frames.push({ ...(await captureFrame(time)), clip: point.clip });
+      }
+    } catch { /* Preserve the finding even when one source clip cannot be reopened. */ }
+  }
+  return frames;
+};
+const calibratedReductionFor = async (finding, index, total, key) => {
+  const evidence = await denseEvidenceFor(finding);
+  if (!evidence.length) return { low_sec_per_cycle: 0, high_sec_per_cycle: 0, independent: false, confidence: 'low', basis: 'Dense video evidence could not be captured.' };
+  const batchReports = [];
+  const batches = chunk(evidence, MAX_IMAGES_PER_ANALYSIS_BATCH);
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    setProgress(`Measuring opportunity ${index}/${total}: window ${batchIndex + 1}/${batches.length}…`);
+    const prompt = `You are measuring the visible time in a short, dense video sequence for one industrial-engineering opportunity. The sampled frames are chronological and spaced approximately ${1 / DENSE_EVIDENCE_FPS} seconds apart. Opportunity: ${finding.observation}. Evidence claim: ${finding.evidence}. Identify only visible avoidable motion, reach, search, regrip, or waiting related to this specific opportunity. Do not count required quality, safety, inspection, or product-changing work as recoverable. Estimate a conservative observed avoidable-duration range for this window and state whether the sequence is too ambiguous to estimate. Never use a canned range or claim stopwatch precision. Return STRICT JSON: {"window_summary":"one sentence","avoidable_duration_low_sec":0,"avoidable_duration_high_sec":0,"recoverable_fraction_low":0,"recoverable_fraction_high":0,"basis":"visible timing evidence and uncertainty"}.`;
+    batchReports.push(await analyzeContent(contentFor(prompt, batches[batchIndex]), key));
+  }
+  const synthesisPrompt = `You are consolidating dense video measurements for one work-method opportunity. The original finding is: ${finding.observation}. Its evidence is: ${finding.evidence}. The reports below are from chronological frames approximately ${1 / DENSE_EVIDENCE_FPS} seconds apart around every linked occurrence. Give a conservative estimated cycle-time reduction only from visible avoidable duration and the demonstrated repetition in the linked clips. If the evidence is ambiguous, use 0 for both values. Do not use a generic range and do not claim precision below 0.2 seconds. Return STRICT JSON: {"low_sec_per_cycle":0,"high_sec_per_cycle":0,"confidence":"low|medium|high","basis":"one concise evidence-based sentence"}. Reports:\n${JSON.stringify(batchReports)}`;
+  const result = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }], key);
+  const low = Number(result.low_sec_per_cycle);
+  const high = Number(result.high_sec_per_cycle);
+  if (!Number.isFinite(low) || !Number.isFinite(high) || low < 0 || high < low || high > 60) return { low_sec_per_cycle: 0, high_sec_per_cycle: 0, independent: false, confidence: 'low', basis: 'Dense video evidence did not support a range.' };
+  return { low_sec_per_cycle: low, high_sec_per_cycle: high, independent: false, confidence: ['low', 'medium', 'high'].includes(result.confidence) ? result.confidence : 'low', basis: String(result.basis || 'Estimated from dense timestamped video frames.') };
+};
+const markIndependentReductions = async (findings, key) => {
+  const candidates = findings.map((finding, index) => ({ index: index + 1, observation: finding.observation, experiment: finding.experiment, reduction: finding.reduction_to_validate }))
+    .filter(item => Number(item.reduction?.high_sec_per_cycle) > 0);
+  if (!candidates.length) return;
+  const prompt = `You are reviewing possible cycle-time reductions from one operation. Select only findings that can be added without double-counting the same seconds of work. If two experiments address the same reach, motion, or wait, include only the stronger one. Return STRICT JSON: {"independent_finding_indexes":[1]}. Candidates:\n${JSON.stringify(candidates)}`;
+  const decision = await analyzeContent([{ type: 'input_text', text: prompt }], key);
+  const included = new Set((Array.isArray(decision.independent_finding_indexes) ? decision.independent_finding_indexes : []).map(Number));
+  findings.forEach((finding, index) => { if (finding.reduction_to_validate) finding.reduction_to_validate.independent = included.has(index + 1); });
+};
 const stepsText = steps => Array.isArray(steps) ? steps.map((step, index) => `${index + 1}. ${typeof step === 'string' ? step : step.step || step.name || ''}`).filter(Boolean).join('\n') : '';
 const sourcesText = sources => Array.isArray(sources) ? sources.map(source => typeof source === 'string' ? source : source.label || source.description || source.location || '').filter(Boolean).join('\n') : '';
 
@@ -332,6 +376,13 @@ $('#confirmStudySetup').onclick = async () => {
     const data = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }], key);
     data.cycles_observed = confirmedCycles;
     data.time_distribution = timeSplitFromBatches(batchReports, pendingStudy.evidence.length);
+    const findings = Array.isArray(data.findings) ? data.findings : [];
+    for (let index = 0; index < findings.length; index += 1) {
+      findings[index].reduction_to_validate = await calibratedReductionFor(findings[index], index + 1, findings.length, key);
+    }
+    setProgress('Checking which reduction estimates can be combined…');
+    await markIndependentReductions(findings, key);
+    data.findings = findings;
     renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned, true);
     pendingStudy = null;
   } catch (error) {
