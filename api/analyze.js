@@ -22,16 +22,12 @@ module.exports = async (request, response) => {
   }
 
   // Provider credentials belong to the deployment, never to an individual
-  // browser.  This gives every app user the same configured service while
-  // keeping the Azure key out of localStorage and network requests.
-  const azureKey = process.env.AZURE_OPENAI_API_KEY;
-  const azureEndpoint = String(process.env.AZURE_OPENAI_ENDPOINT || '').replace(/\/+$/, '');
-  const azureModel = process.env.AZURE_OPENAI_MODEL;
-  if (!azureKey || !azureEndpoint || !azureModel) {
+  // browser. This gives every app user the same configured service while
+  // keeping the API key out of localStorage and network requests.
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const openaiModel = process.env.OPENAI_MODEL;
+  if (!openaiKey || !openaiModel) {
     return response.status(503).json({ error: { message: 'Shared AI service is not configured. Contact the app administrator.' } });
-  }
-  if (!/^https:\/\/[a-z0-9-]+\.openai\.azure\.com\/openai\/v1$/i.test(azureEndpoint)) {
-    return response.status(503).json({ error: { message: 'Shared AI service endpoint is not configured correctly.' } });
   }
 
   const clientIp = String(request.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
@@ -50,11 +46,11 @@ module.exports = async (request, response) => {
   }
 
   try {
-    const { provider: _provider, azureEndpoint: _azureEndpoint, model: _model, ...azureBody } = request.body;
-    const upstream = await fetch(`${azureEndpoint}/responses`, {
+    const { provider: _provider, azureEndpoint: _azureEndpoint, model: _model, ...openaiBody } = request.body;
+    const upstream = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': azureKey },
-      body: JSON.stringify({ ...azureBody, model: azureModel }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
+      body: JSON.stringify({ ...openaiBody, model: openaiModel }),
     });
     const body = await upstream.text();
     response.status(upstream.status).setHeader('Content-Type', 'application/json').send(body);
