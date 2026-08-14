@@ -37,64 +37,9 @@ const ensureLoadingUi = () => {
   }
   return loader;
 };
-const PROVIDERS = {
-  'azure-openai': {
-    label: 'Azure OpenAI',
-    models: [
-      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-      { id: 'claude-opus-5', label: 'Claude Opus 5' },
-    ],
-  },
-  openai: { label: 'OpenAI', models: [{ id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }] },
-  anthropic: { label: 'Anthropic', models: [{ id: 'claude-opus-5', label: 'Claude Opus 5' }] },
-};
-const DEFAULT_AZURE_ENDPOINT = 'https://opsexcellence.openai.azure.com/openai/v1';
-const selectedProvider = () => localStorage.getItem('helios-provider') || 'azure-openai';
-const selectedModel = () => {
-  const provider = PROVIDERS[selectedProvider()];
-  const saved = localStorage.getItem('helios-model');
-  return provider.models.some(model => model.id === saved) ? saved : provider.models[0].id;
-};
-const updateModelOptions = () => {
-  const provider = PROVIDERS[$('#provider').value];
-  const current = $('#model').value || selectedModel();
-  $('#model').innerHTML = provider.models.map(model => `<option value="${model.id}">${model.label}</option>`).join('');
-  $('#model').value = provider.models.some(model => model.id === current) ? current : provider.models[0].id;
-  $('#azureEndpointField').hidden = $('#provider').value !== 'azure-openai';
-};
 const hasReachEvidence = finding => /reach|bin|container|component location/i.test(`${finding.observation || ''} ${finding.evidence || ''}`);
 
-$('#settingsBtn').onclick = () => {
-  const provider = selectedProvider();
-  $('#provider').value = provider;
-  $('#key').value = localStorage.getItem('helios-key') || '';
-  $('#azureEndpoint').value = localStorage.getItem('helios-azure-endpoint') || DEFAULT_AZURE_ENDPOINT;
-  updateModelOptions();
-  $('#settings').classList.add('open');
-  $('#key').focus();
-};
-$('#closeSettings').onclick = () => $('#settings').classList.remove('open');
-$('#clearSettings').onclick = () => {
-  localStorage.removeItem('helios-key');
-  $('#key').value = '';
-  toast('Saved API key cleared.');
-};
-$('#provider').onchange = () => {
-  updateModelOptions();
-};
-$('#saveSettings').onclick = () => {
-  const key = $('#key').value.trim();
-  if (!key) return toast('Paste an API key before saving.');
-  const provider = $('#provider').value;
-  const azureEndpoint = $('#azureEndpoint').value.trim().replace(/\/+$/, '');
-  if (provider === 'azure-openai' && !azureEndpoint) return toast('Add the Azure endpoint before saving.');
-  localStorage.setItem('helios-key', key);
-  localStorage.setItem('helios-provider', provider);
-  localStorage.setItem('helios-model', $('#model').value);
-  if (provider === 'azure-openai') localStorage.setItem('helios-azure-endpoint', azureEndpoint);
-  $('#settings').classList.remove('open');
-  toast('AI settings saved locally.');
-};
+$('#settingsBtn').onclick = () => toast('AI service is managed securely for all users.');
 $('#editTitle').onclick = () => {
   const title = prompt('Study title', $('#studyTitle').textContent);
   if (title?.trim()) $('#studyTitle').textContent = title.trim();
@@ -265,11 +210,11 @@ const scanClip = async (clip, clipNumber, total) => {
 };
 
 const outputTextFor = output => output.output_text || output.output?.flatMap(item => item.content || []).filter(item => item.type === 'output_text' || item.type === 'text').map(item => item.text || '').join('') || '';
-const analyzeContent = async (content, key) => {
+const analyzeContent = async content => {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 55000);
   try {
-    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ provider: selectedProvider(), model: selectedModel(), azureEndpoint: localStorage.getItem('helios-azure-endpoint') || DEFAULT_AZURE_ENDPOINT, input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
+    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
     if (!response.ok) throw new Error((await response.json()).error?.message || 'Analysis failed');
     return JSON.parse(outputTextFor(await response.json()) || '{}');
   } finally { window.clearTimeout(timeout); }
@@ -331,8 +276,6 @@ const sourcesText = sources => Array.isArray(sources) ? sources.map(source => ty
 
 $('#analyzeBtn').onclick = async () => {
   if (!studyFiles.length) return toast('Upload a video first.');
-  const key = localStorage.getItem('helios-key');
-  if (!key) { $('#settings').classList.add('open'); return toast('Add an API key to enable analysis.'); }
 
   const button = $('#analyzeBtn');
   const loader = ensureLoadingUi();
@@ -382,7 +325,6 @@ $('#confirmStudySetup').onclick = async () => {
   const confirmedCycles = Number(cycleCountInput);
   if (!sources || !steps || !cycleCountInput || !Number.isInteger(confirmedCycles) || confirmedCycles < 0) return toast('Confirm the material source, cycle order, and complete-cycle count before continuing.');
   if (!pendingStudy) return toast('Run the setup review again.');
-  const key = localStorage.getItem('helios-key');
   const button = $('#analyzeBtn');
   const loader = ensureLoadingUi();
   $('#studySetup').classList.remove('open');
