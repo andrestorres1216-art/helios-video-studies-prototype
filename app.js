@@ -22,7 +22,13 @@ const translations = {
     nav:'Nghiên cứu thời gian chu kỳ', newStudy:'Nghiên cứu video mới', ready:'Sẵn sàng tải lên', settings:'Cài đặt AI', upload:'↑  Tải video lên', emptyTitle:'Tải video sản xuất lên để bắt đầu', emptyCopy:'Tải lên tối đa 10 video liên tục, mỗi video không quá 3 phút. OpEx xác định các chu kỳ hoàn chỉnh lặp lại trong video.', run:'✦ Chạy báo cáo phương pháp làm việc bằng AI', max:'TỐI ĐA 3 PHÚT', maxCopy:'Mỗi video phải dài không quá 3 phút.', uploadGuide:'Hướng dẫn tải lên:', guideCopy:'Tối đa 10 video, mỗi video không quá 3 phút. Giữ toàn bộ thao tác lặp lại trong khung hình; độ tin cậy dựa trên số chu kỳ hoàn chỉnh quan sát được, không phải số tệp.', preUploadTitle:'Trước khi chọn video', preUploadCopy:'Chọn cùng lúc tất cả video cho nghiên cứu này trong cửa sổ tiếp theo.', preUploadNote:'Chọn tối đa 10 video của cùng một quy trình và thiết lập. Mỗi video phải dài không quá 3 phút. Nếu chọn lại video sau đó, bộ video hiện tại sẽ bị thay thế.', chooseVideos:'Chọn video', summary:'TÓM TẮT NGHIÊN CỨU', cycleNeed:'Ước tính thời gian chu kỳ bằng AI cần 10 chu kỳ hoàn chỉnh được quan sát', cycles:'chu kỳ được quan sát', confidence:'độ tin cậy', split:'PHÂN BỔ THỜI GIAN SƠ BỘ', splitEmpty:'Tải video lên và chạy phân tích để tạo các phát hiện định hướng.', source:'Giá trị gia tăng làm thay đổi sản phẩm. Lãng phí gồm với tay, tìm kiếm, cầm lại, chờ đợi hoặc chuyển động có thể tránh.', opportunities:'Cơ hội cải tiến', awaiting:'ĐANG CHỜ VIDEO', none:'Chưa có cơ hội cải tiến. Tải video lên rồi chạy phân tích AI để tạo các phát hiện.', guard:'Các đề xuất cần được xem xét về chất lượng, công thái học và kiểm soát thay đổi.', setupTitle:'Xác nhận thiết lập nghiên cứu', setupCopy:'AI đã đề xuất các thông tin này từ những khung hình mẫu. Hãy chỉnh sửa trước báo cáo cuối để AI không đoán nguồn linh kiện hoặc điểm bắt đầu và kết thúc chu kỳ.', sources:'Nguồn vật liệu đã xác nhận', steps:'Thứ tự chu kỳ đã xác nhận', count:'Số chu kỳ hoàn chỉnh do người đánh giá xác nhận', cancel:'Hủy', confirm:'Dùng thiết lập và chạy báo cáo', analyzing:'Đang phân tích', languageName:'Vietnamese', low:'Thấp', medium:'Trung bình', high:'Cao'
   }
 };
+Object.assign(translations.en, { savedStudies:'Saved studies', noSaved:'No saved studies yet', saveStudy:'Save study', backToNew:'Back to new study', savedStatus:'Saved study', savedToast:'Study saved.', savePrompt:'Study name' });
+Object.assign(translations.es, { savedStudies:'Estudios guardados', noSaved:'Aún no hay estudios guardados', saveStudy:'Guardar estudio', backToNew:'Volver a nuevo estudio', savedStatus:'Estudio guardado', savedToast:'Estudio guardado.', savePrompt:'Nombre del estudio' });
+Object.assign(translations.vi, { savedStudies:'Nghiên cứu đã lưu', noSaved:'Chưa có nghiên cứu đã lưu', saveStudy:'Lưu nghiên cứu', backToNew:'Quay lại nghiên cứu mới', savedStatus:'Nghiên cứu đã lưu', savedToast:'Đã lưu nghiên cứu.', savePrompt:'Tên nghiên cứu' });
+const SAVED_STUDIES_KEY = 'helios-saved-studies-v1';
 let language = ['en','es','vi'].includes(localStorage.getItem('helios-language')) ? localStorage.getItem('helios-language') : 'en';
+let lastRenderedReport = null;
+let viewingSavedStudy = false;
 const tr = key => translations[language][key] || translations.en[key] || key;
 const setText = (selector, text) => { const element = $(selector); if (element) element.textContent = text; };
 const applyLanguage = () => {
@@ -45,6 +51,35 @@ const applyLanguage = () => {
   setText('#cancelUpload', tr('cancel')); setText('#continueUpload', tr('chooseVideos'));
   setText('label[for="confirmedSources"]', tr('sources')); setText('label[for="confirmedSteps"]', tr('steps')); setText('label[for="confirmedCycleCount"]', tr('count'));
   setText('#cancelStudySetup', tr('cancel')); setText('#confirmStudySetup', tr('confirm')); setText('.analysis-loading-card > div:nth-child(2)', tr('analyzing'));
+  setText('.saved-nav h3', tr('savedStudies')); setText('#saveStudy', tr('saveStudy')); setText('#backToNewStudy', tr('backToNew'));
+  renderSavedStudyList();
+};
+
+const savedStudies = () => {
+  try { const studies = JSON.parse(localStorage.getItem(SAVED_STUDIES_KEY) || '[]'); return Array.isArray(studies) ? studies : []; }
+  catch { return []; }
+};
+const renderSavedStudyList = () => {
+  const list = $('#savedStudyList');
+  if (!list) return;
+  const studies = savedStudies();
+  list.innerHTML = studies.length ? studies.map(study => `<button type="button" data-study-id="${escapeHtml(study.id)}" title="${escapeHtml(study.name)}">${escapeHtml(study.name)}</button>`).join('') : `<div class="saved-empty">${tr('noSaved')}</div>`;
+  list.querySelectorAll('button').forEach(button => { button.onclick = () => loadSavedStudy(button.dataset.studyId); });
+};
+const loadSavedStudy = id => {
+  const study = savedStudies().find(item => item.id === id);
+  if (!study) return;
+  viewingSavedStudy = true;
+  language = ['en','es','vi'].includes(study.language) ? study.language : language;
+  localStorage.setItem('helios-language', language);
+  document.body.classList.add('saved-view');
+  applyLanguage();
+  $('#studyTitle').textContent = study.name;
+  renderReport(study.report, study.videoCount || 0, study.evidenceCount || 0, study.scannedCount || 0, study.reviewerConfirmedCycles === true);
+  $('#studyStatus').textContent = tr('savedStatus');
+  $('#saveStudy').hidden = true;
+  $('#backToNewStudy').hidden = false;
+  document.querySelectorAll('#savedStudyList button').forEach(button => button.classList.toggle('active', button.dataset.studyId === id));
 };
 
 const confidenceFor = cycles => cycles < 5 ? tr('low') : cycles < CYCLES_FOR_ESTIMATE ? tr('medium') : tr('high');
@@ -89,6 +124,21 @@ $('#editTitle').onclick = () => {
 $('#uploadBtn').onclick = () => $('#uploadGuidance').classList.add('open');
 $('#cancelUpload').onclick = () => $('#uploadGuidance').classList.remove('open');
 $('#continueUpload').onclick = () => { $('#uploadGuidance').classList.remove('open'); fileInput.click(); };
+$('#newStudyLink').onclick = event => { event.preventDefault(); window.location.reload(); };
+$('#backToNewStudy').onclick = () => window.location.reload();
+$('#saveStudy').onclick = () => {
+  if (!lastRenderedReport || viewingSavedStudy) return;
+  const defaultName = $('#studyTitle').textContent.trim() || tr('newStudy');
+  const name = prompt(tr('savePrompt'), defaultName)?.trim();
+  if (!name) return;
+  const studies = savedStudies();
+  const record = { ...lastRenderedReport, id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`, name, language, savedAt: new Date().toISOString() };
+  studies.unshift(record);
+  localStorage.setItem(SAVED_STUDIES_KEY, JSON.stringify(studies));
+  renderSavedStudyList();
+  $('#saveStudy').hidden = true;
+  toast(tr('savedToast'));
+};
 
 const durationFor = file => new Promise((resolve, reject) => {
   const probe = document.createElement('video');
@@ -200,7 +250,7 @@ const evidencePointsFor = finding => (Array.isArray(finding?.evidence_points) ? 
   .slice(0, 1);
 const evidenceHtml = finding => {
   const text = escapeHtml(finding?.evidence || 'Visible evidence in the reviewed video.');
-  const links = evidencePointsFor(finding).map(point => `<button type="button" class="evidence-link" data-clip="${point.clip}" data-start="${point.start}" data-end="${point.end}">Clip ${point.clip} · ${formatTime(point.start)}–${formatTime(point.end)}</button>`).join('');
+  const links = evidencePointsFor(finding).map(point => viewingSavedStudy ? `<span>Clip ${point.clip} · ${formatTime(point.start)}–${formatTime(point.end)}</span>` : `<button type="button" class="evidence-link" data-clip="${point.clip}" data-start="${point.start}" data-end="${point.end}">Clip ${point.clip} · ${formatTime(point.start)}–${formatTime(point.end)}</button>`).join('');
   return `${text}${links ? ` ${links}` : ''}`;
 };
 const potentialReductionFrom = findings => {
@@ -413,6 +463,7 @@ $('#confirmStudySetup').onclick = async () => {
 };
 
 function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerConfirmedCycles = false) {
+  if (!viewingSavedStudy) lastRenderedReport = { report: JSON.parse(JSON.stringify(data)), videoCount, evidenceCount, scannedCount, reviewerConfirmedCycles };
   const findings = Array.isArray(data.findings) ? data.findings : [];
   const cycles = Number(data.cycles_observed);
   $('#cycles').textContent = Number.isFinite(cycles) ? cycles : '—';
@@ -462,6 +513,7 @@ function renderReport(data, videoCount, evidenceCount, scannedCount, reviewerCon
   }).join('')}${potential ? `<div class="reduction-total"><span>Potential cycle-time reduction to validate</span><strong>${formatSeconds(potential.low)}–${formatSeconds(potential.high)} sec/cycle</strong><small>Totals only independent experiments ${potential.indexes.join(', ')}; verify with a before/after timed study.</small></div>` : '<div class="reduction-total muted-total"><span>Potential cycle-time reduction</span><small>Not totaled: the video did not support independent, non-overlapping time ranges. Validate with a timed study.</small></div>'}` : '<div class="detail" style="padding:14px 0">No finding was supported by this evidence set.</div>';
   $('#opportunityRows').innerHTML = review + rows;
   bindEvidenceLinks();
+  if (!viewingSavedStudy) $('#saveStudy').hidden = false;
   $('#analysisHint').innerHTML = `<b>Report complete:</b> ${videoCount} video${videoCount === 1 ? '' : 's'} reviewed; ${observedCycles} complete cycles observed. Confidence: ${confidenceFor(observedCycles)}.`;
   toast('Work-method report complete.');
 }
