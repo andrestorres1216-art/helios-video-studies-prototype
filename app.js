@@ -11,7 +11,41 @@ let analysisCancelled = false;
 let pendingStudy = null;
 let evidenceStopListener = null;
 
-const confidenceFor = cycles => cycles < 5 ? 'Low' : cycles < CYCLES_FOR_ESTIMATE ? 'Medium' : 'High';
+const translations = {
+  en: {
+    nav:'Cycle Time Studies', newStudy:'New video study', ready:'Ready for upload', settings:'AI Settings', upload:'↑  Upload video', emptyTitle:'Upload a manufacturing video to begin', emptyCopy:'Upload up to 10 continuous clips, up to 3 minutes each. OpEx identifies repeated complete cycles inside the footage.', run:'✦ Run AI work-method report', max:'3 MIN MAX', maxCopy:'Each individual video must be 3 minutes or shorter.', uploadGuide:'Upload guidance:', guideCopy:'Up to 10 videos, each up to 3 minutes. Keep the full repeated operation in frame; confidence is based on complete cycles observed, not the number of files.', summary:'STUDY SUMMARY', cycleNeed:'AI cycle-time estimate requires 10 complete observed cycles', cycles:'cycles observed', confidence:'confidence', split:'PRELIMINARY TIME SPLIT', splitEmpty:'Upload a video and run analysis to generate directional findings.', source:'Value-added changes the product. Waste is reach, search, regrip, waiting, or other avoidable motion.', opportunities:'Opportunities', awaiting:'AWAITING VIDEO', none:'No opportunities yet. Upload a video, then run AI analysis to create findings for review.', guard:'Recommendations require quality, ergonomic, and change-control review.', setupTitle:'Confirm the study setup', setupCopy:'The AI proposed these from sampled frames. Correct them before the final report; this prevents it from guessing which bin is a part source or where a cycle begins and ends.', sources:'Confirmed material source(s)', steps:'Confirmed cycle order', count:'Reviewer-confirmed complete cycles in this study', cancel:'Cancel', confirm:'Use confirmed setup & run report', analyzing:'Analyzing', languageName:'English', low:'Low', medium:'Medium', high:'High'
+  },
+  es: {
+    nav:'Estudios de tiempo de ciclo', newStudy:'Nuevo estudio de video', ready:'Listo para cargar', settings:'Configuración de IA', upload:'↑  Cargar video', emptyTitle:'Cargue un video de manufactura para comenzar', emptyCopy:'Cargue hasta 10 videos continuos de un máximo de 3 minutos cada uno. OpEx identifica ciclos completos repetidos en el material.', run:'✦ Ejecutar informe de método de trabajo con IA', max:'MÁX. 3 MIN', maxCopy:'Cada video debe durar 3 minutos o menos.', uploadGuide:'Guía de carga:', guideCopy:'Hasta 10 videos de un máximo de 3 minutos cada uno. Mantenga toda la operación repetida dentro del encuadre; la confianza se basa en los ciclos completos observados, no en la cantidad de archivos.', summary:'RESUMEN DEL ESTUDIO', cycleNeed:'La estimación del tiempo de ciclo por IA requiere 10 ciclos completos observados', cycles:'ciclos observados', confidence:'confianza', split:'DISTRIBUCIÓN PRELIMINAR DEL TIEMPO', splitEmpty:'Cargue un video y ejecute el análisis para generar hallazgos preliminares.', source:'El valor agregado transforma el producto. El desperdicio incluye alcanzar, buscar, reacomodar, esperar u otros movimientos evitables.', opportunities:'Oportunidades', awaiting:'ESPERANDO VIDEO', none:'Aún no hay oportunidades. Cargue un video y ejecute el análisis de IA para crear hallazgos.', guard:'Las recomendaciones requieren revisión de calidad, ergonomía y control de cambios.', setupTitle:'Confirme la configuración del estudio', setupCopy:'La IA propuso estos datos a partir de fotogramas muestreados. Corríjalos antes del informe final para evitar que adivine el origen de las piezas o el inicio y fin del ciclo.', sources:'Fuente(s) de material confirmada(s)', steps:'Orden del ciclo confirmado', count:'Ciclos completos confirmados por el revisor', cancel:'Cancelar', confirm:'Usar configuración y ejecutar informe', analyzing:'Analizando', languageName:'Spanish', low:'Baja', medium:'Media', high:'Alta'
+  },
+  vi: {
+    nav:'Nghiên cứu thời gian chu kỳ', newStudy:'Nghiên cứu video mới', ready:'Sẵn sàng tải lên', settings:'Cài đặt AI', upload:'↑  Tải video lên', emptyTitle:'Tải video sản xuất lên để bắt đầu', emptyCopy:'Tải lên tối đa 10 video liên tục, mỗi video không quá 3 phút. OpEx xác định các chu kỳ hoàn chỉnh lặp lại trong video.', run:'✦ Chạy báo cáo phương pháp làm việc bằng AI', max:'TỐI ĐA 3 PHÚT', maxCopy:'Mỗi video phải dài không quá 3 phút.', uploadGuide:'Hướng dẫn tải lên:', guideCopy:'Tối đa 10 video, mỗi video không quá 3 phút. Giữ toàn bộ thao tác lặp lại trong khung hình; độ tin cậy dựa trên số chu kỳ hoàn chỉnh quan sát được, không phải số tệp.', summary:'TÓM TẮT NGHIÊN CỨU', cycleNeed:'Ước tính thời gian chu kỳ bằng AI cần 10 chu kỳ hoàn chỉnh được quan sát', cycles:'chu kỳ được quan sát', confidence:'độ tin cậy', split:'PHÂN BỔ THỜI GIAN SƠ BỘ', splitEmpty:'Tải video lên và chạy phân tích để tạo các phát hiện định hướng.', source:'Giá trị gia tăng làm thay đổi sản phẩm. Lãng phí gồm với tay, tìm kiếm, cầm lại, chờ đợi hoặc chuyển động có thể tránh.', opportunities:'Cơ hội cải tiến', awaiting:'ĐANG CHỜ VIDEO', none:'Chưa có cơ hội cải tiến. Tải video lên rồi chạy phân tích AI để tạo các phát hiện.', guard:'Các đề xuất cần được xem xét về chất lượng, công thái học và kiểm soát thay đổi.', setupTitle:'Xác nhận thiết lập nghiên cứu', setupCopy:'AI đã đề xuất các thông tin này từ những khung hình mẫu. Hãy chỉnh sửa trước báo cáo cuối để AI không đoán nguồn linh kiện hoặc điểm bắt đầu và kết thúc chu kỳ.', sources:'Nguồn vật liệu đã xác nhận', steps:'Thứ tự chu kỳ đã xác nhận', count:'Số chu kỳ hoàn chỉnh do người đánh giá xác nhận', cancel:'Hủy', confirm:'Dùng thiết lập và chạy báo cáo', analyzing:'Đang phân tích', languageName:'Vietnamese', low:'Thấp', medium:'Trung bình', high:'Cao'
+  }
+};
+let language = ['en','es','vi'].includes(localStorage.getItem('helios-language')) ? localStorage.getItem('helios-language') : 'en';
+const tr = key => translations[language][key] || translations.en[key] || key;
+const setText = (selector, text) => { const element = $(selector); if (element) element.textContent = text; };
+const applyLanguage = () => {
+  document.documentElement.lang = language;
+  $('#languageSelect').value = language;
+  setText('.nav a', `▸ ${tr('nav')}`); setText('.top h1', tr('nav'));
+  if (['New video study','Nuevo estudio de video','Nghiên cứu video mới'].includes($('#studyTitle').textContent)) setText('#studyTitle', tr('newStudy'));
+  if (!studyFiles.length) setText('#studyStatus', tr('ready'));
+  setText('#settingsBtn', tr('settings')); setText('#uploadBtn', tr('upload'));
+  $('#emptyVideo').innerHTML = `<div><strong>${tr('emptyTitle')}</strong>${tr('emptyCopy')}</div>`;
+  if (!studyFiles.length) setText('#analyzeBtn', tr('run'));
+  document.querySelector('.video-limit strong').textContent = tr('max'); document.querySelector('.video-limit span').textContent = tr('maxCopy');
+  if (!studyFiles.length) $('#analysisHint').innerHTML = `<b>${tr('uploadGuide')}</b> ${tr('guideCopy')}`;
+  setText('.summary .eyebrow', tr('summary')); if (!studyFiles.length) setText('#cycleLabel', tr('cycleNeed')); setText('#cyclesLabel', tr('cycles'));
+  document.querySelector('.facts > div:nth-child(2)').lastChild.textContent = tr('confidence');
+  if (!studyFiles.length) { setText('#distributionLabel', tr('split')); $('#lossLegend').innerHTML = `<span>${tr('splitEmpty')}</span>`; }
+  setText('.source', tr('source')); setText('.opp h3', tr('opportunities')); if (!studyFiles.length) { setText('#aiStatus', tr('awaiting')); $('#opportunityRows').innerHTML = `<div class="detail" style="padding:22px 0">${tr('none')}</div>`; }
+  setText('.guard', tr('guard')); setText('#studySetup .modal h2', tr('setupTitle')); setText('#studySetup .modal p', tr('setupCopy'));
+  setText('label[for="confirmedSources"]', tr('sources')); setText('label[for="confirmedSteps"]', tr('steps')); setText('label[for="confirmedCycleCount"]', tr('count'));
+  setText('#cancelStudySetup', tr('cancel')); setText('#confirmStudySetup', tr('confirm')); setText('.analysis-loading-card > div:nth-child(2)', tr('analyzing'));
+};
+
+const confidenceFor = cycles => cycles < 5 ? tr('low') : cycles < CYCLES_FOR_ESTIMATE ? tr('medium') : tr('high');
 const formatTime = seconds => {
   const minutes = Math.floor(seconds / 60);
   const remainder = (seconds % 60).toFixed(1).padStart(4, '0');
@@ -40,6 +74,12 @@ const ensureLoadingUi = () => {
 const hasReachEvidence = finding => /reach|bin|container|component location/i.test(`${finding.observation || ''} ${finding.evidence || ''}`);
 
 $('#settingsBtn').onclick = () => toast('AI service is managed securely for all users.');
+$('#languageSelect').onchange = event => {
+  language = event.target.value;
+  localStorage.setItem('helios-language', language);
+  applyLanguage();
+};
+applyLanguage();
 $('#editTitle').onclick = () => {
   const title = prompt('Study title', $('#studyTitle').textContent);
   if (title?.trim()) $('#studyTitle').textContent = title.trim();
@@ -211,10 +251,13 @@ const scanClip = async (clip, clipNumber, total) => {
 
 const outputTextFor = output => output.output_text || output.output?.flatMap(item => item.content || []).filter(item => item.type === 'output_text' || item.type === 'text').map(item => item.text || '').join('') || '';
 const analyzeContent = async content => {
+  const localizedContent = content.map((item, index) => index === 0 && item.type === 'input_text'
+    ? { ...item, text: `${item.text}\nWrite all human-readable JSON string values in ${tr('languageName')}. Keep JSON property names exactly as specified.` }
+    : item);
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 55000);
   try {
-    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: [{ role: 'user', content }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
+    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: [{ role: 'user', content: localizedContent }], text: { format: { type: 'json_object' } } }), signal: controller.signal });
     if (!response.ok) throw new Error((await response.json()).error?.message || 'Analysis failed');
     return JSON.parse(outputTextFor(await response.json()) || '{}');
   } finally { window.clearTimeout(timeout); }
@@ -242,7 +285,7 @@ const denseEvidenceFor = async finding => {
   }
   return frames;
 };
-const calibratedReductionFor = async (finding, index, total, key) => {
+const calibratedReductionFor = async (finding, index, total) => {
   const evidence = await denseEvidenceFor(finding);
   if (!evidence.length) return { low_sec_per_cycle: 0, high_sec_per_cycle: 0, independent: false, confidence: 'low', basis: 'Dense video evidence could not be captured.' };
   const batchReports = [];
@@ -250,10 +293,10 @@ const calibratedReductionFor = async (finding, index, total, key) => {
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
     setProgress(`Measuring opportunity ${index}/${total}: window ${batchIndex + 1}/${batches.length}…`);
     const prompt = `You are measuring the visible time in a short, dense video sequence for one industrial-engineering opportunity. The sampled frames are chronological and spaced approximately ${1 / DENSE_EVIDENCE_FPS} seconds apart. Opportunity: ${finding.observation}. Evidence claim: ${finding.evidence}. Identify only visible avoidable motion, reach, search, regrip, or waiting related to this specific opportunity. Do not count required quality, safety, inspection, or product-changing work as recoverable. Estimate a conservative observed avoidable-duration range for this window and state whether the sequence is too ambiguous to estimate. Never use a canned range or claim stopwatch precision. Return STRICT JSON: {"window_summary":"one sentence","avoidable_duration_low_sec":0,"avoidable_duration_high_sec":0,"recoverable_fraction_low":0,"recoverable_fraction_high":0,"basis":"visible timing evidence and uncertainty"}.`;
-    batchReports.push(await analyzeContent(contentFor(prompt, batches[batchIndex]), key));
+    batchReports.push(await analyzeContent(contentFor(prompt, batches[batchIndex])));
   }
   const synthesisPrompt = `You are consolidating dense video measurements for one work-method opportunity. The original finding is: ${finding.observation}. Its evidence is: ${finding.evidence}. The reports below are from chronological frames approximately ${1 / DENSE_EVIDENCE_FPS} seconds apart around every linked occurrence. Give a conservative estimated cycle-time reduction only from visible avoidable duration and the demonstrated repetition in the linked clips. Also identify one short playback_window that begins and ends at the visible opportunity (use an exact clip number and timestamps from the dense frames). If the evidence is ambiguous, use 0 for both values and use the original evidence window. Do not use a generic range and do not claim precision below 0.2 seconds. Return STRICT JSON: {"low_sec_per_cycle":0,"high_sec_per_cycle":0,"confidence":"low|medium|high","basis":"one concise evidence-based sentence","playback_window":{"clip":1,"start_time_seconds":0,"end_time_seconds":1}}. Reports:\n${JSON.stringify(batchReports)}`;
-  const result = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }], key);
+  const result = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }]);
   const low = Number(result.low_sec_per_cycle);
   const high = Number(result.high_sec_per_cycle);
   const window = result.playback_window || {};
@@ -262,12 +305,12 @@ const calibratedReductionFor = async (finding, index, total, key) => {
   if (!Number.isFinite(low) || !Number.isFinite(high) || low < 0 || high < low || high > 60) return { low_sec_per_cycle: 0, high_sec_per_cycle: 0, independent: false, confidence: 'low', basis: 'Dense video evidence did not support a range.', playback_window: hasPlayback ? playback : null };
   return { low_sec_per_cycle: low, high_sec_per_cycle: high, independent: false, confidence: ['low', 'medium', 'high'].includes(result.confidence) ? result.confidence : 'low', basis: String(result.basis || 'Estimated from dense timestamped video frames.'), playback_window: hasPlayback ? playback : null };
 };
-const markIndependentReductions = async (findings, key) => {
+const markIndependentReductions = async findings => {
   const candidates = findings.map((finding, index) => ({ index: index + 1, observation: finding.observation, experiment: finding.experiment, reduction: finding.reduction_to_validate }))
     .filter(item => Number(item.reduction?.high_sec_per_cycle) > 0);
   if (!candidates.length) return;
   const prompt = `You are reviewing possible cycle-time reductions from one operation. Select only findings that can be added without double-counting the same seconds of work. If two experiments address the same reach, motion, or wait, include only the stronger one. Return STRICT JSON: {"independent_finding_indexes":[1]}. Candidates:\n${JSON.stringify(candidates)}`;
-  const decision = await analyzeContent([{ type: 'input_text', text: prompt }], key);
+  const decision = await analyzeContent([{ type: 'input_text', text: prompt }]);
   const included = new Set((Array.isArray(decision.independent_finding_indexes) ? decision.independent_finding_indexes : []).map(Number));
   findings.forEach((finding, index) => { if (finding.reduction_to_validate) finding.reduction_to_validate.independent = included.has(index + 1); });
 };
@@ -294,7 +337,7 @@ $('#analyzeBtn').onclick = async () => {
     if (analysisCancelled) throw new Error('Analysis cancelled');
     setProgress('Proposing sources and cycle order…');
     const calibrationPrompt = `You are preparing a human-confirmed setup for an industrial cycle-time study from ${clips.length} continuous assembly video clip${clips.length === 1 ? '' : 's'}. From the ordered frames, propose likely material-source containers and the likely ordered cycle steps. Never call a source or step certain: the study lead must confirm it. Do not count cycles or give opportunities yet. Return STRICT JSON: {"source_candidates":["candidate source and visible location"],"cycle_steps":["proposed step in sequence"],"setup_note":"one concise uncertainty note"}.`;
-    const calibration = await analyzeContent(contentFor(calibrationPrompt, sampleEvenly(evidence, Math.min(MAX_IMAGES_PER_ANALYSIS_BATCH, evidence.length))), key);
+    const calibration = await analyzeContent(contentFor(calibrationPrompt, sampleEvenly(evidence, Math.min(MAX_IMAGES_PER_ANALYSIS_BATCH, evidence.length))));
     pendingStudy = { clips, evidence, scanned };
     $('#confirmedSources').value = sourcesText(calibration.source_candidates);
     $('#confirmedSteps').value = stepsText(calibration.cycle_steps);
@@ -337,21 +380,21 @@ $('#confirmStudySetup').onclick = async () => {
     for (let index = 0; index < batches.length; index += 1) {
       setProgress(`Reviewing evidence batch ${index + 1}/${batches.length} (${batches[index].length} frames)…`);
       const batchPrompt = `You are a senior industrial engineer reviewing chronological evidence batch ${index + 1} of ${batches.length} from a continuous assembly video study. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; do not substitute an AI estimate. Report only visible, evidence-based work-method opportunities in these timestamped frames. A source-location finding must refer only to a confirmed source. Separate visible observation from the experiment to test it; mark unproven mechanism as a hypothesis. Do not present results as measured. Every finding must include exactly one structured evidence point using the exact clip number and a short start/end interval from the supplied frame timestamps. Also classify all ${batches[index].length} sampled frames by their visible state: value-added = directly changes the product in the confirmed cycle; avoidable waste = visible reach, search, regrip, waiting, or avoidable motion; uncertain-or-required = cannot be reliably classified from the frame or may be required work. Do not call required inspection, safety, or quality work waste without clear visual evidence. The three frame counts must be non-negative integers totaling exactly ${batches[index].length}. Return STRICT JSON: {"batch_summary":"one sentence","time_split":{"value_added_frames":0,"avoidable_waste_frames":0,"uncertain_or_required_frames":0,"basis":"brief visual basis with timestamps"},"findings":[{"observation":"visible fact only","evidence":"short evidence sentence","evidence_points":[{"clip":1,"start_time_seconds":0,"end_time_seconds":1}],"experiment":"specific change to test","category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise uncertainty note"}. Include at most 5 distinct findings.`;
-      batchReports.push(await analyzeContent(contentFor(batchPrompt, batches[index]), key));
+      batchReports.push(await analyzeContent(contentFor(batchPrompt, batches[index])));
     }
     setProgress('Synthesizing findings across all evidence batches…');
     const synthesisPrompt = `You are a senior industrial engineer synthesizing chronological evidence-batch reviews from ${pendingStudy.clips.length} continuous assembly video clip${pendingStudy.clips.length === 1 ? '' : 's'} of the same operation. The study lead has confirmed the material source(s): ${sources}. The confirmed cycle order is: ${steps}. The reviewer-confirmed complete-cycle count is ${confirmedCycles}; use that exact count and do not substitute an AI estimate. Deduplicate overlapping findings across batches. Retain only evidence-based findings with their structured clip/start/end evidence_points; do not invent timestamps or alter clip numbers. A source-location finding must refer only to a confirmed source. Each finding must separate visible observation from experiment; mark unproven mechanism as a hypothesis. Do not present any result as measured. For each finding, provide reduction_to_validate only when the visible evidence supports a conservative directional range; never use a generic range, never imply precision below one second, and use zeroes when no defensible range is possible. Set independent true only if its experiment does not overlap with another included experiment; when uncertain, set it false. Only provide cycle_time when reviewer-confirmed cycles are at least ${CYCLES_FOR_ESTIMATE}; otherwise use an empty string. Return STRICT JSON: {"summary":"one sentence","cycles_observed":${confirmedCycles},"cycle_time":"Preliminary: ~0 sec/cycle or empty string","findings":[{"observation":"visible fact only","evidence":"short evidence sentence","evidence_points":[{"clip":1,"start_time_seconds":0,"end_time_seconds":1}],"experiment":"specific change to test","reduction_to_validate":{"low_sec_per_cycle":0,"high_sec_per_cycle":0,"independent":false,"basis":"why this range is or is not defensible from the video"},"category":"reach|motion|waiting|material_handling|ergonomics"}],"limitations":"one concise sentence"}. Evidence-batch reviews follow:\n${JSON.stringify(batchReports)}`;
-    const data = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }], key);
+    const data = await analyzeContent([{ type: 'input_text', text: synthesisPrompt }]);
     data.cycles_observed = confirmedCycles;
     data.time_distribution = timeSplitFromBatches(batchReports, pendingStudy.evidence.length);
     const findings = Array.isArray(data.findings) ? data.findings : [];
     for (let index = 0; index < findings.length; index += 1) {
-      const calibration = await calibratedReductionFor(findings[index], index + 1, findings.length, key);
+      const calibration = await calibratedReductionFor(findings[index], index + 1, findings.length);
       findings[index].reduction_to_validate = calibration;
       if (calibration.playback_window) findings[index].evidence_points = [calibration.playback_window];
     }
     setProgress('Checking which reduction estimates can be combined…');
-    await markIndependentReductions(findings, key);
+    await markIndependentReductions(findings);
     data.findings = findings;
     renderReport(data, pendingStudy.clips.length, pendingStudy.evidence.length, pendingStudy.scanned, true);
     pendingStudy = null;
